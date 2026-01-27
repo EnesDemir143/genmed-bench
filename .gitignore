@@ -230,8 +230,12 @@ poetry.toml
 pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python,macos,jupyternotebooks
-# DVC
-/data/processed/
+# DVC - ignore LMDB data but track .dvc files
+/data/processed/**/*.lmdb
+/data/processed/**/*.lmdb/**
+!/data/processed/
+!/data/processed/*/
+!/data/processed/**/*.dvc
 /data/raw/chest-datasets
 
 # Logs

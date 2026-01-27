@@ -1,0 +1,6 @@
+outs:
+- md5: d319397d3ddd56b39902a041d55f45c0.dir
+  size: 2422218752
+  nfiles: 2
+  hash: md5
+  path: covidx.lmdb

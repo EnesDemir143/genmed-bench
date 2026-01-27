@@ -8,14 +8,9 @@ stages:
     outs:
       - data/processed/nih/nih.lmdb
 
-  prepare_covidx:
-    cmd: python scripts/prepare_data.py --dataset covidx --image-size 256 --quality 95
-    deps:
-      - scripts/prepare_data.py
-      - src/data/data_convert.py
-      - data/raw/chest-datasets/covidx
-    outs:
-      - data/processed/covidx/covidx.lmdb
+  # NOTE: covidx removed from pipeline due to symlink I/O issues
+  # Run manually: python scripts/prepare_data.py --dataset covidx --image-size 256 --quality 95
+  # Then: dvc add data/processed/covidx/covidx.lmdb
 
   prepare_vinbigdata:
     cmd: python scripts/prepare_data.py --dataset vinbigdata --image-size 256 --quality 95
