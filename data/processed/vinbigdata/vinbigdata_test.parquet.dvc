@@ -1,0 +1,5 @@
+outs:
+- md5: bbac16a45736bf55af35e42d5b1e619a
+  size: 114374
+  hash: md5
+  path: vinbigdata_test.parquet

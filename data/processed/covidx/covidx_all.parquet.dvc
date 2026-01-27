@@ -1,0 +1,5 @@
+outs:
+- md5: 86b8b4f7408577a34715eec822d4c897
+  size: 2162451
+  hash: md5
+  path: covidx_all.parquet

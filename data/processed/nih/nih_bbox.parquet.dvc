@@ -1,0 +1,5 @@
+outs:
+- md5: f5bccd7ac1f87a696ddf1ab70ab25a21
+  size: 38627
+  hash: md5
+  path: nih_bbox.parquet
