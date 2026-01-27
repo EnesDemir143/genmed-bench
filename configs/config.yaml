@@ -1,0 +1,28 @@
+# GenMed-Bench Configuration
+
+data:
+  # Raw data (SSD'den symlink)
+  raw_root: "data/raw/chest-datasets"
+  
+  # Processed LMDB files
+  processed_root: "data/processed"
+  
+  # Dataset paths
+  datasets:
+    nih:
+      raw: "${data.raw_root}/nih"
+      processed: "${data.processed_root}/nih.lmdb"
+    chexpert:
+      raw: "${data.raw_root}/chexpert-small"
+      processed: "${data.processed_root}/chexpert.lmdb"
+    covidx:
+      raw: "${data.raw_root}/covidx"
+      processed: "${data.processed_root}/covidx.lmdb"
+    vinbigdata:
+      raw: "${data.raw_root}/vinbigdata"
+      processed: "${data.processed_root}/vinbigdata.lmdb"
+
+# Preprocessing settings (LMDB oluştururken)
+preprocessing:
+  image_size: 224
+  normalize: true

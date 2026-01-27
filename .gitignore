@@ -230,3 +230,6 @@ poetry.toml
 pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python,macos,jupyternotebooks
+# DVC
+/data/processed/
+/data/raw/chest-datasets

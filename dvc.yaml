@@ -1,0 +1,12 @@
+# DVC Pipeline Configuration
+# Bu dosya LMDB preprocessing pipeline'ını tanımlar
+# Kullanım: dvc repro
+
+# stages:
+#   prepare_nih:
+#     cmd: python scripts/prepare_data.py --dataset nih --output data/processed/nih.lmdb
+#     deps:
+#       - scripts/prepare_data.py
+#       - data/raw/chest-datasets/nih
+#     outs:
+#       - data/processed/nih.lmdb
