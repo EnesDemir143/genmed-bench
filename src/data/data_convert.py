@@ -6,7 +6,6 @@ with parallel processing support for efficient data loading during training.
 """
 
 import io
-import logging
 import os
 from pathlib import Path
 from typing import Optional, Tuple
@@ -16,7 +15,9 @@ from joblib import Parallel, delayed
 from PIL import Image
 from tqdm import tqdm
 
-logger = logging.getLogger(__name__)
+from src.utils.logging import get_logger
+
+logger = get_logger("data_convert")
 
 SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
 
@@ -50,20 +51,32 @@ def process_one_image(
         return None
 
 
-def get_image_files(data_path: str) -> list:
+def get_image_files(data_path: str, recursive: bool = True) -> list:
     """
     Get all supported image files from a directory.
 
     Args:
         data_path: Path to the directory containing images.
+        recursive: If True, search subdirectories recursively.
 
     Returns:
-        Sorted list of image filenames with supported extensions.
+        Sorted list of full file paths with supported extensions.
     """
-    image_files = [
-        f for f in os.listdir(data_path)
-        if Path(f).suffix.lower() in SUPPORTED_EXTENSIONS
-    ]
+    root = Path(data_path)
+    image_files = []
+    
+    logger.info(f"Scanning directory structure: {data_path}...")
+    
+    # Iterate through all files and filter
+    iterator = root.rglob("*") if recursive else root.iterdir()
+    
+    for p in tqdm(iterator, desc="Scanning files", unit="file"):
+        if (p.is_file() 
+            and p.suffix.lower() in SUPPORTED_EXTENSIONS
+            and not p.name.startswith("._")  # Ignore macOS metadata files
+            and not p.name.startswith(".")):  # Ignore hidden files
+            image_files.append(str(p))
+    
     image_files.sort()
     return image_files
 
@@ -98,7 +111,7 @@ def create_lmdb_fast(
 
     processed_imgs = Parallel(n_jobs=n_jobs)(
         delayed(process_one_image)(
-            os.path.join(data_path, f),
+            f,  # Already full path from get_image_files
             img_size,
             quality
         )

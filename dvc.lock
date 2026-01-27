@@ -1,0 +1,48 @@
+schema: '2.0'
+stages:
+  prepare_nih:
+    cmd: python scripts/prepare_data.py --dataset nih --image-size 256 --quality
+      95
+    deps:
+    - path: data/raw/chest-datasets/nih
+      hash: md5
+      md5: db4950cf4d95a0b8d44530312c64a686.dir
+      size: 45536561399
+      nfiles: 224280
+    - path: scripts/prepare_data.py
+      hash: md5
+      md5: fdfa310ba238807407d78d2fe06d761e
+      size: 4790
+    - path: src/data/data_convert.py
+      hash: md5
+      md5: 8418a959f1fc0c0570c4a579975b24e8
+      size: 4441
+    outs:
+    - path: data/processed/nih/nih.lmdb
+      hash: md5
+      md5: ff1d45de4a40ccb7cbb445d7ebb8b73f.dir
+      size: 3129516032
+      nfiles: 2
+  prepare_vinbigdata:
+    cmd: python scripts/prepare_data.py --dataset vinbigdata --image-size 256 
+      --quality 95
+    deps:
+    - path: data/raw/chest-datasets/vinbigdata
+      hash: md5
+      md5: 4cf38a8928da9ef1332a0d12385834b2.dir
+      size: 50007022375
+      nfiles: 36008
+    - path: scripts/prepare_data.py
+      hash: md5
+      md5: fdfa310ba238807407d78d2fe06d761e
+      size: 4790
+    - path: src/data/data_convert.py
+      hash: md5
+      md5: 8418a959f1fc0c0570c4a579975b24e8
+      size: 4441
+    outs:
+    - path: data/processed/vinbigdata/vinbigdata.lmdb
+      hash: md5
+      md5: e63d53c138471be820be61a053bfad17.dir
+      size: 542810112
+      nfiles: 2

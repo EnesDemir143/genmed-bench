@@ -11,18 +11,14 @@ data:
   datasets:
     nih:
       raw: "${data.raw_root}/nih"
-      processed: "${data.processed_root}/nih.lmdb"
-    chexpert:
-      raw: "${data.raw_root}/chexpert-small"
-      processed: "${data.processed_root}/chexpert.lmdb"
+      processed: "${data.processed_root}/nih/nih.lmdb"
     covidx:
       raw: "${data.raw_root}/covidx"
-      processed: "${data.processed_root}/covidx.lmdb"
+      processed: "${data.processed_root}/covidx/covidx.lmdb"
     vinbigdata:
       raw: "${data.raw_root}/vinbigdata"
-      processed: "${data.processed_root}/vinbigdata.lmdb"
+      processed: "${data.processed_root}/vinbigdata/vinbigdata.lmdb"
 
-# Preprocessing settings (LMDB oluştururken)
 preprocessing:
-  image_size: 224
+  image_size: 256
   normalize: true

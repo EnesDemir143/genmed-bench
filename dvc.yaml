@@ -1,7 +1,3 @@
-# DVC Pipeline Configuration
-# Bu dosya LMDB preprocessing pipeline'ını tanımlar
-# Kullanım: dvc repro
-
 stages:
   prepare_nih:
     cmd: python scripts/prepare_data.py --dataset nih --image-size 256 --quality 95
@@ -10,7 +6,7 @@ stages:
       - src/data/data_convert.py
       - data/raw/chest-datasets/nih
     outs:
-      - data/processed/nih.lmdb
+      - data/processed/nih/nih.lmdb
 
   prepare_covidx:
     cmd: python scripts/prepare_data.py --dataset covidx --image-size 256 --quality 95
@@ -19,7 +15,7 @@ stages:
       - src/data/data_convert.py
       - data/raw/chest-datasets/covidx
     outs:
-      - data/processed/covidx.lmdb
+      - data/processed/covidx/covidx.lmdb
 
   prepare_vinbigdata:
     cmd: python scripts/prepare_data.py --dataset vinbigdata --image-size 256 --quality 95
@@ -28,4 +24,4 @@ stages:
       - src/data/data_convert.py
       - data/raw/chest-datasets/vinbigdata
     outs:
-      - data/processed/vinbigdata.lmdb
+      - data/processed/vinbigdata/vinbigdata.lmdb
