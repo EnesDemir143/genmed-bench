@@ -1,9 +1,3 @@
-"""
-PyTorch Dataset classes for chest X-ray datasets.
-
-Supports LMDB-backed image loading with parquet metadata for efficient training.
-"""
-
 import io
 from pathlib import Path
 from typing import Callable, Optional, Tuple, List
@@ -19,6 +13,9 @@ class LMDBDataset(Dataset):
     """
     Base dataset class for LMDB-backed image data.
     
+    Uses lazy initialization for LMDB environment to support multiprocessing
+    with DataLoader num_workers > 0.
+    
     Args:
         lmdb_path: Path to the LMDB database directory.
         transform: Optional transform to apply to images.
@@ -31,26 +28,39 @@ class LMDBDataset(Dataset):
     ):
         self.lmdb_path = lmdb_path
         self.transform = transform
+        self._env = None  # Lazy init for multiprocessing support
         
-        # Open LMDB environment
-        self.env = lmdb.open(
-            lmdb_path,
-            readonly=True,
-            lock=False,
-            readahead=False,
-            meminit=False,
-        )
-        
-        # Get dataset length
-        with self.env.begin(write=False) as txn:
+        # Get dataset length (open temporarily, then close)
+        env = lmdb.open(lmdb_path, readonly=True, lock=False, readahead=False, meminit=False)
+        with env.begin(write=False) as txn:
             self._length = int(txn.get(b'length').decode('ascii'))
+        env.close()
+    
+    def _init_lmdb(self):
+        """Lazy init LMDB - called in each worker process."""
+        if self._env is None:
+            self._env = lmdb.open(
+                self.lmdb_path,
+                readonly=True,
+                lock=False,
+                readahead=False,
+                meminit=False,
+            )
+    
+    @property
+    def env(self):
+        """Get LMDB environment, initializing if needed."""
+        self._init_lmdb()
+        return self._env
     
     def __len__(self) -> int:
         return self._length
     
     def __getitem__(self, idx: int) -> torch.Tensor:
         """Get image by index."""
-        with self.env.begin(write=False) as txn:
+        self._init_lmdb()  # Ensure LMDB is open in this worker
+        
+        with self._env.begin(write=False) as txn:
             key = f"{idx}".encode('ascii')
             img_bytes = txn.get(key)
         
@@ -67,19 +77,20 @@ class LMDBDataset(Dataset):
     
     def close(self):
         """Close LMDB environment."""
-        self.env.close()
+        if self._env is not None:
+            self._env.close()
+            self._env = None
     
     def __del__(self):
         """Cleanup on deletion."""
-        try:
-            self.env.close()
-        except:
-            pass
+        self.close()
 
 
 class NIHChestXrayDataset(Dataset):
     """
     NIH Chest X-ray14 dataset with multi-label classification.
+    
+    Uses lazy LMDB initialization for multiprocessing support.
     
     Args:
         lmdb_path: Path to the LMDB database directory.
@@ -91,14 +102,6 @@ class NIHChestXrayDataset(Dataset):
         Atelectasis, Cardiomegaly, Effusion, Infiltration, Mass, Nodule,
         Pneumonia, Pneumothorax, Consolidation, Edema, Emphysema, Fibrosis,
         Pleural_Thickening, Hernia
-    
-    Example:
-        # Using split file from data/splits/nih/
-        dataset = NIHChestXrayDataset(
-            lmdb_path="data/processed/nih/nih.lmdb",
-            metadata_path="data/splits/nih/train.parquet",
-            transform=transform
-        )
     """
     
     CLASSES = [
@@ -117,13 +120,12 @@ class NIHChestXrayDataset(Dataset):
         self.lmdb_path = lmdb_path
         self.transform = transform
         self.num_classes = len(self.CLASSES)
+        self._env = None  # Lazy init for multiprocessing
         
         # Load metadata (can be split-specific file)
         self.metadata = pd.read_parquet(metadata_path)
         
         # Load or create index mapping (image_index -> LMDB key)
-        # This is needed because LMDB keys are sequential 0,1,2...
-        # but split files contain only a subset of images
         if index_mapping_path and Path(index_mapping_path).exists():
             self.index_map = pd.read_parquet(index_mapping_path)
             self.index_map = dict(zip(
@@ -131,26 +133,26 @@ class NIHChestXrayDataset(Dataset):
                 self.index_map['lmdb_key']
             ))
         else:
-            # Assume metadata has 'lmdb_idx' column or use row index
             if 'lmdb_idx' in self.metadata.columns:
                 self.index_map = dict(zip(
                     self.metadata['image_index'],
                     self.metadata['lmdb_idx']
                 ))
             else:
-                # Fallback: assume sorted order matches LMDB keys
                 self.index_map = None
         
         self.metadata = self.metadata.reset_index(drop=True)
-        
-        # Open LMDB
-        self.env = lmdb.open(
-            lmdb_path,
-            readonly=True,
-            lock=False,
-            readahead=False,
-            meminit=False,
-        )
+    
+    def _init_lmdb(self):
+        """Lazy init LMDB - called in each worker process."""
+        if self._env is None:
+            self._env = lmdb.open(
+                self.lmdb_path,
+                readonly=True,
+                lock=False,
+                readahead=False,
+                meminit=False,
+            )
     
     def __len__(self) -> int:
         return len(self.metadata)
@@ -161,7 +163,6 @@ class NIHChestXrayDataset(Dataset):
             image_index = self.metadata.iloc[idx]['image_index']
             return str(self.index_map[image_index])
         else:
-            # Use lmdb_idx if available, otherwise use idx
             if 'lmdb_idx' in self.metadata.columns:
                 return str(self.metadata.iloc[idx]['lmdb_idx'])
             return str(idx)
@@ -182,197 +183,123 @@ class NIHChestXrayDataset(Dataset):
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get image and labels by index."""
-        row = self.metadata.iloc[idx]
+        self._init_lmdb()  # Ensure LMDB is open in this worker
         
-        # Get LMDB key for this image
+        row = self.metadata.iloc[idx]
         lmdb_key = self._get_lmdb_key(idx)
         
-        # Get image from LMDB
-        with self.env.begin(write=False) as txn:
+        with self._env.begin(write=False) as txn:
             key = lmdb_key.encode('ascii')
             img_bytes = txn.get(key)
         
         if img_bytes is None:
             raise KeyError(f"Image with index {idx} not found in LMDB")
         
-        # Decode image
         img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
         
         if self.transform:
             img = self.transform(img)
         
-        # Get labels
         labels = self._get_labels(row['finding_labels'])
         
         return img, labels
     
     def close(self):
         """Close LMDB environment."""
-        self.env.close()
+        if self._env is not None:
+            self._env.close()
+            self._env = None
+
 
 
 class COVIDxDataset(Dataset):
-    """
-    COVIDx dataset for COVID-19 classification.
-    
-    Args:
-        lmdb_path: Path to the LMDB database directory.
-        metadata_path: Path to the parquet metadata file (split-specific).
-        transform: Optional transform to apply to images.
-    
-    Labels (3 classes):
-        negative, positive, COVID-19
-    
-    Example:
-        # Using split file from data/splits/covidx/
-        dataset = COVIDxDataset(
-            lmdb_path="data/processed/covidx/covidx.lmdb",
-            metadata_path="data/splits/covidx/train.parquet",
-            transform=transform
-        )
-    """
+    """COVIDx dataset with lazy LMDB init for multiprocessing."""
     
     CLASSES = ['negative', 'positive', 'COVID-19']
     
-    def __init__(
-        self,
-        lmdb_path: str,
-        metadata_path: str,
-        transform: Optional[Callable] = None,
-    ):
+    def __init__(self, lmdb_path: str, metadata_path: str, transform: Optional[Callable] = None):
         self.lmdb_path = lmdb_path
         self.transform = transform
         self.num_classes = len(self.CLASSES)
-        
-        # Load metadata (can be split-specific file)
-        self.metadata = pd.read_parquet(metadata_path)
-        self.metadata = self.metadata.reset_index(drop=True)
-        
-        # Open LMDB
-        self.env = lmdb.open(
-            lmdb_path,
-            readonly=True,
-            lock=False,
-            readahead=False,
-            meminit=False,
-        )
+        self._env = None
+        self.metadata = pd.read_parquet(metadata_path).reset_index(drop=True)
+    
+    def _init_lmdb(self):
+        if self._env is None:
+            self._env = lmdb.open(self.lmdb_path, readonly=True, lock=False, readahead=False, meminit=False)
     
     def __len__(self) -> int:
         return len(self.metadata)
     
     def _get_lmdb_key(self, idx: int) -> str:
-        """Get LMDB key for a metadata row index."""
         if 'lmdb_idx' in self.metadata.columns:
             return str(self.metadata.iloc[idx]['lmdb_idx'])
         return str(idx)
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-        """Get image and label by index."""
+        self._init_lmdb()
         row = self.metadata.iloc[idx]
-        
-        # Get LMDB key
         lmdb_key = self._get_lmdb_key(idx)
         
-        # Get image from LMDB
-        with self.env.begin(write=False) as txn:
-            key = lmdb_key.encode('ascii')
-            img_bytes = txn.get(key)
+        with self._env.begin(write=False) as txn:
+            img_bytes = txn.get(lmdb_key.encode('ascii'))
         
         if img_bytes is None:
-            raise KeyError(f"Image with index {idx} not found in LMDB")
+            raise KeyError(f"Image {idx} not found")
         
-        # Decode image
         img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
-        
         if self.transform:
             img = self.transform(img)
         
-        # Get label
-        label = self.CLASSES.index(row['label'])
-        
-        return img, label
+        return img, self.CLASSES.index(row['label'])
     
     def close(self):
-        """Close LMDB environment."""
-        self.env.close()
+        if self._env:
+            self._env.close()
+            self._env = None
 
 
 class VinBigDataDataset(Dataset):
-    """
-    VinBigData chest X-ray dataset.
+    """VinBigData dataset with lazy LMDB init for multiprocessing."""
     
-    Args:
-        lmdb_path: Path to the LMDB database directory.
-        metadata_path: Path to the parquet metadata file (split-specific).
-        transform: Optional transform to apply to images.
-    
-    Note: VinBigData is primarily for object detection (bounding boxes).
-          This class provides image-level access for classification/SSL tasks.
-    
-    Example:
-        # Using split file from data/splits/vinbigdata/
-        dataset = VinBigDataDataset(
-            lmdb_path="data/processed/vinbigdata/vinbigdata.lmdb",
-            metadata_path="data/splits/vinbigdata/train.parquet",
-            transform=transform
-        )
-    """
-    
-    def __init__(
-        self,
-        lmdb_path: str,
-        metadata_path: str,
-        transform: Optional[Callable] = None,
-    ):
+    def __init__(self, lmdb_path: str, metadata_path: str, transform: Optional[Callable] = None):
         self.lmdb_path = lmdb_path
         self.transform = transform
-        
-        # Load metadata (can be split-specific file)
-        self.metadata = pd.read_parquet(metadata_path)
-        self.metadata = self.metadata.reset_index(drop=True)
-        
-        # Open LMDB
-        self.env = lmdb.open(
-            lmdb_path,
-            readonly=True,
-            lock=False,
-            readahead=False,
-            meminit=False,
-        )
+        self._env = None
+        self.metadata = pd.read_parquet(metadata_path).reset_index(drop=True)
+    
+    def _init_lmdb(self):
+        if self._env is None:
+            self._env = lmdb.open(self.lmdb_path, readonly=True, lock=False, readahead=False, meminit=False)
     
     def __len__(self) -> int:
         return len(self.metadata)
     
     def _get_lmdb_key(self, idx: int) -> str:
-        """Get LMDB key for a metadata row index."""
         if 'lmdb_idx' in self.metadata.columns:
             return str(self.metadata.iloc[idx]['lmdb_idx'])
         return str(idx)
     
     def __getitem__(self, idx: int) -> torch.Tensor:
-        """Get image by index."""
-        # Get LMDB key
+        self._init_lmdb()
         lmdb_key = self._get_lmdb_key(idx)
         
-        # Get image from LMDB
-        with self.env.begin(write=False) as txn:
-            key = lmdb_key.encode('ascii')
-            img_bytes = txn.get(key)
+        with self._env.begin(write=False) as txn:
+            img_bytes = txn.get(lmdb_key.encode('ascii'))
         
         if img_bytes is None:
-            raise KeyError(f"Image with index {idx} not found in LMDB")
+            raise KeyError(f"Image {idx} not found")
         
-        # Decode image
         img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
-        
         if self.transform:
             img = self.transform(img)
         
         return img
     
     def close(self):
-        """Close LMDB environment."""
-        self.env.close()
+        if self._env:
+            self._env.close()
+            self._env = None
 
 
 class SSLDataset(Dataset):
