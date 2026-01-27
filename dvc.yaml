@@ -2,11 +2,30 @@
 # Bu dosya LMDB preprocessing pipeline'ını tanımlar
 # Kullanım: dvc repro
 
-# stages:
-#   prepare_nih:
-#     cmd: python scripts/prepare_data.py --dataset nih --output data/processed/nih.lmdb
-#     deps:
-#       - scripts/prepare_data.py
-#       - data/raw/chest-datasets/nih
-#     outs:
-#       - data/processed/nih.lmdb
+stages:
+  prepare_nih:
+    cmd: python scripts/prepare_data.py --dataset nih --image-size 256 --quality 95
+    deps:
+      - scripts/prepare_data.py
+      - src/data/data_convert.py
+      - data/raw/chest-datasets/nih
+    outs:
+      - data/processed/nih.lmdb
+
+  prepare_covidx:
+    cmd: python scripts/prepare_data.py --dataset covidx --image-size 256 --quality 95
+    deps:
+      - scripts/prepare_data.py
+      - src/data/data_convert.py
+      - data/raw/chest-datasets/covidx
+    outs:
+      - data/processed/covidx.lmdb
+
+  prepare_vinbigdata:
+    cmd: python scripts/prepare_data.py --dataset vinbigdata --image-size 256 --quality 95
+    deps:
+      - scripts/prepare_data.py
+      - src/data/data_convert.py
+      - data/raw/chest-datasets/vinbigdata
+    outs:
+      - data/processed/vinbigdata.lmdb
