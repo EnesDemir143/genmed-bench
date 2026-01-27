@@ -18,7 +18,8 @@ genmed-bench/
 ├── data/
 │   ├── raw/            # Symlinks to source datasets
 │   ├── processed/      # LMDB databases
-│   └── splits/         # Train/val/test splits
+│   ├── splits/         # Train/val/test splits
+│   └── stats/          # Normalization stats (.npy)
 ├── notebooks/          # Jupyter notebooks for exploration
 ├── scripts/            # Data preparation & evaluation scripts
 ├── src/
@@ -69,6 +70,12 @@ pip install -e .
 3. **Prepare metadata**:
    ```bash
    python scripts/prepare_metadata.py --dataset all
+   ```
+
+4. **Compute normalization stats** (mean/std for each dataset):
+   ```bash
+   python -m src.data.compute_stats --lmdb_path data/processed/nih/nih.lmdb
+   # Saves to data/stats/nih.npy
    ```
 
 ### Using DVC
