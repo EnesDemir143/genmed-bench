@@ -240,3 +240,7 @@ pyrightconfig.json
 
 # Logs
 logs/
+
+# Ignore split files except DVC pointers
+/data/splits/**
+!/data/splits/**/*.dvc
