@@ -233,3 +233,6 @@ pyrightconfig.json
 # DVC
 /data/processed/
 /data/raw/chest-datasets
+
+# Logs
+logs/
