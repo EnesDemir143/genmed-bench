@@ -22,8 +22,9 @@ class VinBigDataDataset(Dataset):
         if 'lmdb_idx' in self.metadata.columns:
             return str(self.metadata.iloc[idx]['lmdb_idx'])
         return str(idx)
-    def __getitem__(self, idx: int) -> torch.Tensor:
+    def __getitem__(self, idx: int):
         self._init_lmdb()
+        row = self.metadata.iloc[idx]
         lmdb_key = self._get_lmdb_key(idx)
         with self._env.begin(write=False) as txn:
             img_bytes = txn.get(lmdb_key.encode('ascii'))
@@ -32,7 +33,14 @@ class VinBigDataDataset(Dataset):
         img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
         if self.transform:
             img = self.transform(img)
-        return img
+        # Label: 'label' veya 'class_id' column'dan
+        if 'label' in row:
+            label = int(row['label'])
+        elif 'class_id' in row:
+            label = int(row['class_id'])
+        else:
+            label = 0  # Default
+        return img, label
     def close(self):
         if self._env:
             self._env.close()

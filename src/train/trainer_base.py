@@ -246,11 +246,12 @@ class BaseTrainer(ABC):
         if epochs is None:
             epochs = self.config.get('epochs', 100)
         
-        print(f"\n{'='*60}")
-        print(f"Training: {self.config.get('model_name', 'model')}")
-        print(f"Device: {self.device}")
-        print(f"Epochs: {epochs}")
-        print(f"{'='*60}\n")
+        import logging
+        log = logging.getLogger("train")
+        
+        log.info(f"Training: {self.config.get('model_name', 'model')}")
+        log.info(f"Device: {self.device}")
+        log.info(f"Epochs: {epochs}")
         
         for epoch in range(1, epochs + 1):
             self.current_epoch = epoch
@@ -284,6 +285,13 @@ class BaseTrainer(ABC):
             else:
                 self.early_stopping_counter += 1
             
+            # Per-epoch figures + aggregate curves güncelle
+            if self.multi_label:
+                val_preds = (val_probs >= 0.5).astype(int)
+            else:
+                val_preds = np.argmax(val_probs, axis=1)
+            self.logger.plot_epoch_figures(epoch, val_labels, val_preds, val_probs)
+            
             # Print progress
             self._print_progress(epoch, epochs, train_metrics, val_metrics, is_best)
             
@@ -294,7 +302,7 @@ class BaseTrainer(ABC):
             # Early stopping
             if self.early_stopping_patience > 0:
                 if self.early_stopping_counter >= self.early_stopping_patience:
-                    print(f"\nEarly stopping at epoch {epoch}")
+                    log.info(f"Early stopping at epoch {epoch}")
                     break
         
         # Son epoch predictions
@@ -306,8 +314,16 @@ class BaseTrainer(ABC):
         # Son checkpoint
         self.save_checkpoint(self.logger.get_checkpoint_path('last'), is_best=False)
         
-        # Plot curves
+        # Plot training curves
         self.logger.plot_curves()
+        
+        # Plot final figures (confusion matrix, ROC, PR curves)
+        # val_probs ve val_labels son validasyondan geliyor
+        if self.multi_label:
+            val_preds = (val_probs >= 0.5).astype(int)
+        else:
+            val_preds = np.argmax(val_probs, axis=1)
+        self.logger.plot_final_figures(val_labels, val_preds, val_probs)
         
         # Summary
         self.logger.print_summary()
@@ -402,7 +418,9 @@ class BaseTrainer(ABC):
         
         best_marker = ' *' if is_best else ''
         
-        print(
+        import logging
+        log = logging.getLogger("train")
+        log.info(
             f"Epoch [{epoch:3d}/{total_epochs}] "
             f"LR: {lr:.2e} | "
             f"Train Loss: {train_loss:.4f} | "
@@ -450,4 +468,6 @@ class BaseTrainer(ABC):
         if self.scaler and checkpoint.get('scaler_state_dict'):
             self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
         
-        print(f"Loaded checkpoint from epoch {self.current_epoch}")
+        import logging
+        log = logging.getLogger("train")
+        log.info(f"Loaded checkpoint from epoch {self.current_epoch}")

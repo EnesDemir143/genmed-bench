@@ -106,14 +106,16 @@ def create_nih_splits(
 def create_vinbigdata_splits(
     metadata_path: str,
     output_dir: Path,
-    val_ratio: float = 0.15,
+    val_ratio: float = 0.1,
     seed: int = 42,
 ) -> bool:
     """
-    Create random splits for VinBigData.
+    Create train/val splits for VinBigData.
     
     VinBigData doesn't have patient_id in metadata, so we split by image_id.
     Adds 'lmdb_idx' column for LMDB key mapping.
+    
+    Note: Test evaluation uses the entire dataset separately (no split needed).
     """
     logger.info("Loading VinBigData metadata...")
     df = pd.read_parquet(metadata_path)
@@ -128,7 +130,11 @@ def create_vinbigdata_splits(
     
     logger.info(f"Total images: {len(df)}")
     
-    # Random split
+    # Save splits to dataset-specific directory
+    dataset_output_dir = output_dir / "vinbigdata"
+    dataset_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Train + Val split
     train_df, val_df = train_test_split(
         df,
         test_size=val_ratio,
@@ -142,10 +148,6 @@ def create_vinbigdata_splits(
     
     logger.info(f"Train: {len(train_df)} images")
     logger.info(f"Val: {len(val_df)} images")
-    
-    # Save splits to dataset-specific directory
-    dataset_output_dir = output_dir / "vinbigdata"
-    dataset_output_dir.mkdir(parents=True, exist_ok=True)
     
     train_df.to_parquet(dataset_output_dir / "train.parquet", index=False)
     val_df.to_parquet(dataset_output_dir / "val.parquet", index=False)

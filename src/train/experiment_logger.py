@@ -95,10 +95,18 @@ class ExperimentLogger:
         # Directories
         self.run_dir = Path(base_dir) / self.run_name
         self.checkpoint_dir = self.run_dir / 'checkpoints'
+        self.figs_dir = self.run_dir / 'figs'
         
         # Create directories
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.checkpoint_dir.mkdir(exist_ok=True)
+        self.figs_dir.mkdir(exist_ok=True)
+        
+        # Per-epoch figure subdirectories
+        (self.figs_dir / 'confusion_matrix').mkdir(exist_ok=True)
+        (self.figs_dir / 'roc').mkdir(exist_ok=True)
+        (self.figs_dir / 'pr_curve').mkdir(exist_ok=True)
+        (self.figs_dir / 'class_dist').mkdir(exist_ok=True)
         
         # File paths
         self.config_path = self.run_dir / 'config.yaml'
@@ -292,10 +300,68 @@ class ExperimentLogger:
     # =========================================================================
     
     def plot_curves(self) -> None:
-        """Tüm grafikleri çiz."""
+        """Tüm grafikleri çiz (training sonunda çağrılır)."""
         if not MATPLOTLIB_AVAILABLE:
             return
         
+        self._plot_lr_curve()
+        self._plot_loss_curve()
+        self._plot_metrics_curve()
+        self._plot_system_curve()
+    
+    def plot_final_figures(
+        self,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        y_prob: np.ndarray,
+        class_names: Optional[List[str]] = None,
+    ) -> None:
+        """
+        Training sonunda prediction-based figürleri çiz (son epoch).
+        
+        Args:
+            y_true: Ground truth labels
+            y_pred: Predicted labels
+            y_prob: Prediction probabilities
+            class_names: Class isimleri
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            return
+        
+        # Final figürler (figs/ altına)
+        self._plot_confusion_matrix(y_true, y_pred, class_names, epoch=None)
+        self._plot_roc_curve(y_true, y_prob, class_names, epoch=None)
+        self._plot_precision_recall_curve(y_true, y_prob, class_names, epoch=None)
+        self._plot_class_distribution(y_true, y_pred, class_names, epoch=None)
+    
+    def plot_epoch_figures(
+        self,
+        epoch: int,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        y_prob: np.ndarray,
+        class_names: Optional[List[str]] = None,
+    ) -> None:
+        """
+        Her epoch sonunda per-epoch figürleri çiz.
+        
+        Args:
+            epoch: Current epoch number
+            y_true: Ground truth labels
+            y_pred: Predicted labels
+            y_prob: Prediction probabilities
+            class_names: Class isimleri
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            return
+        
+        # Per-epoch figürler (subfolder'lara)
+        self._plot_confusion_matrix(y_true, y_pred, class_names, epoch=epoch)
+        self._plot_roc_curve(y_true, y_prob, class_names, epoch=epoch)
+        self._plot_precision_recall_curve(y_true, y_prob, class_names, epoch=epoch)
+        self._plot_class_distribution(y_true, y_pred, class_names, epoch=epoch)
+        
+        # Aggregate curve'ları her epoch güncelle
         self._plot_lr_curve()
         self._plot_loss_curve()
         self._plot_metrics_curve()
@@ -316,7 +382,7 @@ class ExperimentLogger:
         plt.title('Learning Rate Schedule')
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig(self.run_dir / 'lr_curve.png', dpi=150)
+        plt.savefig(self.figs_dir / 'lr_curve.png', dpi=150)
         plt.close()
     
     def _plot_loss_curve(self) -> None:
@@ -343,7 +409,7 @@ class ExperimentLogger:
         ax.legend()
         ax.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig(self.run_dir / 'loss_curve.png', dpi=150)
+        plt.savefig(self.figs_dir / 'loss_curve.png', dpi=150)
         plt.close()
     
     def _plot_metrics_curve(self) -> None:
@@ -380,7 +446,7 @@ class ExperimentLogger:
         axes[2].grid(True, alpha=0.3)
         
         plt.tight_layout()
-        plt.savefig(self.run_dir / 'metrics_curve.png', dpi=150)
+        plt.savefig(self.figs_dir / 'metrics_curve.png', dpi=150)
         plt.close()
     
     def _plot_system_curve(self) -> None:
@@ -414,7 +480,224 @@ class ExperimentLogger:
             axes[1].set_ylim(0, 100)
         
         plt.tight_layout()
-        plt.savefig(self.run_dir / 'system_curve.png', dpi=150)
+        plt.savefig(self.figs_dir / 'system_curve.png', dpi=150)
+        plt.close()
+    
+    def _plot_confusion_matrix(
+        self,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        class_names: Optional[List[str]] = None,
+        epoch: Optional[int] = None,
+    ) -> None:
+        """Confusion matrix plot."""
+        from sklearn.metrics import confusion_matrix
+        
+        cm = confusion_matrix(y_true, y_pred)
+        num_classes = cm.shape[0]
+        
+        # Class names
+        if class_names is None:
+            class_names = [str(i) for i in range(num_classes)]
+        
+        # Figure size based on num classes
+        figsize = max(8, num_classes * 0.8)
+        
+        fig, ax = plt.subplots(figsize=(figsize, figsize))
+        
+        # Heatmap
+        im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
+        ax.figure.colorbar(im, ax=ax)
+        
+        # Labels
+        title = f'Confusion Matrix (Epoch {epoch})' if epoch else 'Confusion Matrix (Final)'
+        ax.set(
+            xticks=np.arange(num_classes),
+            yticks=np.arange(num_classes),
+            xticklabels=class_names,
+            yticklabels=class_names,
+            ylabel='True Label',
+            xlabel='Predicted Label',
+            title=title
+        )
+        
+        # Rotate x labels
+        plt.setp(ax.get_xticklabels(), rotation=45, ha='right', rotation_mode='anchor')
+        
+        # Text annotations
+        thresh = cm.max() / 2.
+        for i in range(num_classes):
+            for j in range(num_classes):
+                ax.text(j, i, format(cm[i, j], 'd'),
+                       ha='center', va='center',
+                       color='white' if cm[i, j] > thresh else 'black')
+        
+        plt.tight_layout()
+        
+        # Save path
+        if epoch is not None:
+            save_path = self.figs_dir / 'confusion_matrix' / f'epoch_{epoch:03d}.png'
+        else:
+            save_path = self.figs_dir / 'confusion_matrix_final.png'
+        plt.savefig(save_path, dpi=150)
+        plt.close()
+    
+    def _plot_roc_curve(
+        self,
+        y_true: np.ndarray,
+        y_prob: np.ndarray,
+        class_names: Optional[List[str]] = None,
+        epoch: Optional[int] = None,
+    ) -> None:
+        """ROC curve plot."""
+        from sklearn.metrics import roc_curve, auc
+        
+        # Tek sınıf kontrolü
+        if len(np.unique(y_true)) < 2:
+            return
+        
+        plt.figure(figsize=(10, 8))
+        
+        # Binary classification
+        if y_prob.shape[1] == 2:
+            fpr, tpr, _ = roc_curve(y_true, y_prob[:, 1])
+            roc_auc = auc(fpr, tpr)
+            plt.plot(fpr, tpr, lw=2, label=f'ROC curve (AUC = {roc_auc:.3f})')
+        else:
+            # Multiclass - one vs rest
+            if class_names is None:
+                class_names = [f'Class {i}' for i in range(y_prob.shape[1])]
+            
+            for i in range(y_prob.shape[1]):
+                y_true_binary = (y_true == i).astype(int)
+                if len(np.unique(y_true_binary)) < 2:
+                    continue
+                fpr, tpr, _ = roc_curve(y_true_binary, y_prob[:, i])
+                roc_auc = auc(fpr, tpr)
+                plt.plot(fpr, tpr, lw=2, label=f'{class_names[i]} (AUC = {roc_auc:.3f})')
+        
+        plt.plot([0, 1], [0, 1], 'k--', lw=2, label='Random')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        title = f'ROC Curve (Epoch {epoch})' if epoch else 'ROC Curve (Final)'
+        plt.title(title)
+        plt.legend(loc='lower right')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        # Save path
+        if epoch is not None:
+            save_path = self.figs_dir / 'roc' / f'epoch_{epoch:03d}.png'
+        else:
+            save_path = self.figs_dir / 'roc_curve_final.png'
+        plt.savefig(save_path, dpi=150)
+        plt.close()
+    
+    def _plot_precision_recall_curve(
+        self,
+        y_true: np.ndarray,
+        y_prob: np.ndarray,
+        class_names: Optional[List[str]] = None,
+        epoch: Optional[int] = None,
+    ) -> None:
+        """Precision-Recall curve plot."""
+        from sklearn.metrics import precision_recall_curve, average_precision_score
+        
+        # Tek sınıf kontrolü
+        if len(np.unique(y_true)) < 2:
+            return
+        
+        plt.figure(figsize=(10, 8))
+        
+        # Binary classification
+        if y_prob.shape[1] == 2:
+            precision, recall, _ = precision_recall_curve(y_true, y_prob[:, 1])
+            ap = average_precision_score(y_true, y_prob[:, 1])
+            plt.plot(recall, precision, lw=2, label=f'PR curve (AP = {ap:.3f})')
+        else:
+            # Multiclass
+            if class_names is None:
+                class_names = [f'Class {i}' for i in range(y_prob.shape[1])]
+            
+            for i in range(y_prob.shape[1]):
+                y_true_binary = (y_true == i).astype(int)
+                if len(np.unique(y_true_binary)) < 2:
+                    continue
+                precision, recall, _ = precision_recall_curve(y_true_binary, y_prob[:, i])
+                ap = average_precision_score(y_true_binary, y_prob[:, i])
+                plt.plot(recall, precision, lw=2, label=f'{class_names[i]} (AP = {ap:.3f})')
+        
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        title = f'Precision-Recall Curve (Epoch {epoch})' if epoch else 'Precision-Recall Curve (Final)'
+        plt.title(title)
+        plt.legend(loc='lower left')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        # Save path
+        if epoch is not None:
+            save_path = self.figs_dir / 'pr_curve' / f'epoch_{epoch:03d}.png'
+        else:
+            save_path = self.figs_dir / 'pr_curve_final.png'
+        plt.savefig(save_path, dpi=150)
+        plt.close()
+    
+    def _plot_class_distribution(
+        self,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        class_names: Optional[List[str]] = None,
+        epoch: Optional[int] = None,
+    ) -> None:
+        """Class distribution comparison plot."""
+        num_classes = len(np.unique(y_true))
+        
+        if class_names is None:
+            class_names = [f'Class {i}' for i in range(num_classes)]
+        
+        # Count distributions
+        true_counts = np.bincount(y_true, minlength=num_classes)
+        pred_counts = np.bincount(y_pred, minlength=num_classes)
+        
+        x = np.arange(num_classes)
+        width = 0.35
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        bars1 = ax.bar(x - width/2, true_counts, width, label='True', color='steelblue', alpha=0.8)
+        bars2 = ax.bar(x + width/2, pred_counts, width, label='Predicted', color='coral', alpha=0.8)
+        
+        ax.set_xlabel('Class')
+        ax.set_ylabel('Count')
+        title = f'Class Distribution (Epoch {epoch})' if epoch else 'Class Distribution (Final)'
+        ax.set_title(title)
+        ax.set_xticks(x)
+        ax.set_xticklabels(class_names, rotation=45, ha='right')
+        ax.legend()
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        # Value labels on bars
+        for bar in bars1:
+            height = bar.get_height()
+            ax.annotate(f'{int(height)}', xy=(bar.get_x() + bar.get_width()/2, height),
+                       xytext=(0, 3), textcoords='offset points', ha='center', va='bottom', fontsize=8)
+        for bar in bars2:
+            height = bar.get_height()
+            ax.annotate(f'{int(height)}', xy=(bar.get_x() + bar.get_width()/2, height),
+                       xytext=(0, 3), textcoords='offset points', ha='center', va='bottom', fontsize=8)
+        
+        plt.tight_layout()
+        
+        # Save path
+        if epoch is not None:
+            save_path = self.figs_dir / 'class_dist' / f'epoch_{epoch:03d}.png'
+        else:
+            save_path = self.figs_dir / 'class_distribution_final.png'
+        plt.savefig(save_path, dpi=150)
         plt.close()
     
     # =========================================================================

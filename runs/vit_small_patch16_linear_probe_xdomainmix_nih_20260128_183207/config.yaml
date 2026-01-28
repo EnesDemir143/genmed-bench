@@ -1,0 +1,46 @@
+augmentation: xdomainmix
+batch_size: 64
+dataloader:
+  batch_size: 64
+  drop_last: true
+  num_workers: 4
+  pin_memory: true
+dataset: nih
+epochs: 100
+freeze_backbone: true
+in_chans: 3
+input_size: 224
+label_smoothing: 0.0
+lr: 0.1
+mixed_precision: true
+mixup_alpha: 0.2
+mixup_prob: 0.5
+mode: linear_probe
+model_name: vit_small_patch16
+multi_label: true
+num_classes: 2
+optimizer:
+  lr: 0.1
+  momentum: 0.9
+  name: SGD
+  nesterov: true
+  weight_decay: 0.0
+params_m: 22.0
+patch_size: 16
+pretrained: true
+scheduler:
+  T_max: 100
+  eta_min: 0.0
+  name: cosine
+seed: 42
+timm_name: vit_small_patch16_224
+trainable_layers:
+- head
+- fc
+- classifier
+training:
+  batch_size: 256
+  epochs: 100
+  gradient_clip: null
+  warmup_epochs: 0
+type: vit

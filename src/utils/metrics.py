@@ -86,25 +86,32 @@ def _compute_binary_multiclass_metrics(
     
     # AUC (requires probabilities)
     if y_prob is not None:
-        try:
-            if num_classes == 2:
-                # Binary: use positive class probability
-                prob_positive = y_prob[:, 1] if y_prob.ndim > 1 else y_prob
-                results['roc_auc'] = skmetrics.roc_auc_score(y_true, prob_positive)
-                results['average_precision'] = skmetrics.average_precision_score(
-                    y_true, prob_positive
-                )
-            else:
-                # Multiclass: OvR
-                results['roc_auc'] = skmetrics.roc_auc_score(
-                    y_true, y_prob, multi_class='ovr', average='macro'
-                )
-                results['roc_auc_weighted'] = skmetrics.roc_auc_score(
-                    y_true, y_prob, multi_class='ovr', average='weighted'
-                )
-        except ValueError:
-            # AUC hesaplanamaz (örn: tek sınıf varsa)
-            results['roc_auc'] = None
+        # Tek sınıf kontrolü - AUC hesaplanamaz
+        unique_classes = np.unique(y_true)
+        if len(unique_classes) < 2:
+            # Sadece bir sınıf varsa AUC tanımsız, 0.5 ata
+            results['roc_auc'] = 0.5
+            results['average_precision'] = None
+        else:
+            try:
+                if num_classes == 2:
+                    # Binary: use positive class probability
+                    prob_positive = y_prob[:, 1] if y_prob.ndim > 1 else y_prob
+                    results['roc_auc'] = skmetrics.roc_auc_score(y_true, prob_positive)
+                    results['average_precision'] = skmetrics.average_precision_score(
+                        y_true, prob_positive
+                    )
+                else:
+                    # Multiclass: OvR
+                    results['roc_auc'] = skmetrics.roc_auc_score(
+                        y_true, y_prob, multi_class='ovr', average='macro'
+                    )
+                    results['roc_auc_weighted'] = skmetrics.roc_auc_score(
+                        y_true, y_prob, multi_class='ovr', average='weighted'
+                    )
+            except ValueError:
+                # AUC hesaplanamaz (örn: tek sınıf varsa)
+                results['roc_auc'] = 0.5
     
     # Per-class metrics
     results['per_class'] = {}
@@ -177,15 +184,20 @@ def _compute_multilabel_metrics(
             # Per-label AUC
             results['per_label_auc'] = {}
             for i in range(y_true.shape[1]):
-                try:
-                    auc = skmetrics.roc_auc_score(y_true[:, i], y_prob[:, i])
-                    results['per_label_auc'][i] = auc
-                except ValueError:
-                    results['per_label_auc'][i] = None
+                # Tek sınıf kontrolü
+                unique_vals = np.unique(y_true[:, i])
+                if len(unique_vals) < 2:
+                    results['per_label_auc'][i] = 0.5
+                else:
+                    try:
+                        auc = skmetrics.roc_auc_score(y_true[:, i], y_prob[:, i])
+                        results['per_label_auc'][i] = auc
+                    except ValueError:
+                        results['per_label_auc'][i] = 0.5
                     
         except ValueError:
-            results['roc_auc_micro'] = None
-            results['roc_auc_macro'] = None
+            results['roc_auc_micro'] = 0.5
+            results['roc_auc_macro'] = 0.5
     
     return results
 

@@ -19,12 +19,26 @@ Kullanım:
 """
 
 import argparse
+import logging
 import sys
+import warnings
 from pathlib import Path
 from typing import Optional
 
 import torch
 from torch.utils.data import DataLoader
+
+# =========================================================================
+# WARNING FILTERS - Suppress common noisy warnings
+# =========================================================================
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*Corrupt EXIF data.*")
+warnings.filterwarnings("ignore", message=".*Possibly corrupt EXIF data.*")
+warnings.filterwarnings("ignore", message=".*Detected call of `lr_scheduler.step()` before `optimizer.step()`.*")
+warnings.filterwarnings("ignore", message=".*pin_memory.*")
+warnings.filterwarnings("ignore", message=".*A single label was found.*")
+warnings.filterwarnings("ignore", message=".*Only one class is present.*")
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -105,6 +119,9 @@ def parse_args():
     # Multi-label
     parser.add_argument('--multi_label', action='store_true', help='Multi-label classification')
     
+    # Val ratio for train/val split
+    parser.add_argument('--val_ratio', type=float, default=0.2, help='Validation set ratio (default: 0.2)')
+    
     return parser.parse_args()
 
 
@@ -112,9 +129,18 @@ def get_dataset(
     dataset_name: str,
     split: str,
     transform=None,
-    multi_label: bool = False
+    multi_label: bool = False,
+    val_ratio: float = 0.2,
 ):
-    """Dataset yükle."""
+    """
+    Dataset yükle.
+    
+    Split dosyaları val_ratio'ya göre klasörlerde tutulur:
+    data/splits/{dataset}/val_{ratio}/train.parquet
+    data/splits/{dataset}/val_{ratio}/val.parquet
+    
+    Eğer split yoksa otomatik oluşturulur.
+    """
     # Import dataset sınıfları
     from src.data.dataset import (
         NIHChestXrayDataset,
@@ -122,12 +148,22 @@ def get_dataset(
         VinBigDataDataset,
     )
     
-    # Dataset paths (config'den veya default)
-    base_path = Path('data/processed')
+    # Dataset paths: LMDB in processed, splits in splits directory
+    processed_path = Path('data/processed')
+    splits_base = Path('data/splits')
+    
+    # Val ratio'ya göre klasör adı: val_0.2, val_0.1, etc.
+    ratio_folder = f"val_{val_ratio}"
+    splits_path = splits_base / dataset_name / ratio_folder
+    
+    # Split dosyası var mı kontrol et
+    metadata_path = splits_path / f'{split}.parquet'
+    if not metadata_path.exists():
+        print(f"⚙️  Split bulunamadı, oluşturuluyor: {splits_path}")
+        _create_split_for_dataset(dataset_name, processed_path, splits_path, val_ratio)
     
     if dataset_name == 'nih':
-        lmdb_path = base_path / 'nih' / 'nih.lmdb'
-        metadata_path = base_path / 'nih' / f'nih_{split}.parquet'
+        lmdb_path = processed_path / 'nih' / 'nih.lmdb'
         return NIHChestXrayDataset(
             lmdb_path=str(lmdb_path),
             metadata_path=str(metadata_path),
@@ -135,8 +171,7 @@ def get_dataset(
         )
     
     elif dataset_name == 'covidx':
-        lmdb_path = base_path / 'covidx' / 'covidx.lmdb'
-        metadata_path = base_path / 'covidx' / f'covidx_{split}.parquet'
+        lmdb_path = processed_path / 'covidx' / 'covidx.lmdb'
         return COVIDxDataset(
             lmdb_path=str(lmdb_path),
             metadata_path=str(metadata_path),
@@ -144,8 +179,7 @@ def get_dataset(
         )
     
     elif dataset_name == 'vinbigdata':
-        lmdb_path = base_path / 'vinbigdata' / 'vinbigdata.lmdb'
-        metadata_path = base_path / 'vinbigdata' / f'vinbigdata_{split}.parquet'
+        lmdb_path = processed_path / 'vinbigdata' / 'vinbigdata.lmdb'
         return VinBigDataDataset(
             lmdb_path=str(lmdb_path),
             metadata_path=str(metadata_path),
@@ -154,6 +188,73 @@ def get_dataset(
     
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
+
+
+def _create_split_for_dataset(
+    dataset_name: str,
+    processed_path: Path,
+    output_path: Path,
+    val_ratio: float,
+    seed: int = 42,
+):
+    """
+    Dataset için train/val split oluştur.
+    """
+    import pandas as pd
+    from sklearn.model_selection import train_test_split
+    
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    if dataset_name == 'vinbigdata':
+        metadata_path = processed_path / 'vinbigdata' / 'vinbigdata_all.parquet'
+        df = pd.read_parquet(metadata_path)
+        
+        # Filter to train split only (test has no labels)
+        if 'split' in df.columns:
+            df = df[df['split'] == 'train'].copy()
+        
+        df = df.sort_values('image_id').reset_index(drop=True)
+        df['lmdb_idx'] = df.index
+        
+    elif dataset_name == 'nih':
+        metadata_path = processed_path / 'nih' / 'nih_labels.parquet'
+        df = pd.read_parquet(metadata_path)
+        df = df.sort_values('image_index').reset_index(drop=True)
+        df['lmdb_idx'] = df.index
+        
+    elif dataset_name == 'covidx':
+        # COVIDx has its own splits, just copy train/val
+        train_src = processed_path / 'covidx' / 'covidx_train.parquet'
+        val_src = processed_path / 'covidx' / 'covidx_val.parquet'
+        
+        if train_src.exists() and val_src.exists():
+            train_df = pd.read_parquet(train_src)
+            val_df = pd.read_parquet(val_src)
+            train_df.to_parquet(output_path / 'train.parquet', index=False)
+            val_df.to_parquet(output_path / 'val.parquet', index=False)
+            print(f"   ✅ COVIDx: Train {len(train_df)}, Val {len(val_df)}")
+            return
+        else:
+            raise FileNotFoundError(f"COVIDx split dosyaları bulunamadı: {train_src}")
+    else:
+        raise ValueError(f"Unknown dataset: {dataset_name}")
+    
+    # Train/Val split
+    train_df, val_df = train_test_split(
+        df,
+        test_size=val_ratio,
+        random_state=seed,
+    )
+    
+    train_df = train_df.copy()
+    val_df = val_df.copy()
+    train_df['split'] = 'train'
+    val_df['split'] = 'val'
+    
+    train_df.to_parquet(output_path / 'train.parquet', index=False)
+    val_df.to_parquet(output_path / 'val.parquet', index=False)
+    
+    print(f"   ✅ {dataset_name}: Train {len(train_df)}, Val {len(val_df)}")
 
 
 def get_transforms(input_size: int, is_train: bool):
@@ -182,6 +283,44 @@ def get_transforms(input_size: int, is_train: bool):
         ])
 
 
+def _setup_run_logger(run_dir: Path) -> logging.Logger:
+    """
+    Setup logger that outputs to both console and run-specific log file.
+    
+    Args:
+        run_dir: Path to run directory
+        
+    Returns:
+        Configured logger instance
+    """
+    log = logging.getLogger("train")
+    log.setLevel(logging.INFO)
+    
+    # Clear existing handlers
+    log.handlers.clear()
+    
+    # Format
+    formatter = logging.Formatter(
+        fmt="[%(asctime)s] [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    log.addHandler(console_handler)
+    
+    # File handler - logs to run directory
+    log_file = Path(run_dir) / "train.log"
+    file_handler = logging.FileHandler(log_file, mode="w", encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+    log.addHandler(file_handler)
+    
+    return log
+
+
 def main():
     """Ana training fonksiyonu."""
     args = parse_args()
@@ -192,7 +331,6 @@ def main():
     
     # Seed
     set_seed(args.seed)
-    print(f"🎲 Seed: {args.seed}")
     
     # Model config yükle
     model_config = load_model_config(args.model, mode=args.mode)
@@ -241,20 +379,13 @@ def main():
     input_size = model_config.get('input_size', 224)
     batch_size = model_config.get('batch_size', 32)
     
-    print(f"📊 Dataset: {args.dataset}")
-    print(f"📐 Input size: {input_size}")
-    print(f"📦 Batch size: {batch_size}")
-    
     # Transforms
     train_transform = get_transforms(input_size, is_train=True)
     val_transform = get_transforms(input_size, is_train=False)
     
     # Datasets
-    train_dataset = get_dataset(args.dataset, 'train', train_transform, args.multi_label)
-    val_dataset = get_dataset(args.dataset, 'val', val_transform, args.multi_label)
-    
-    print(f"   Train samples: {len(train_dataset)}")
-    print(f"   Val samples: {len(val_dataset)}")
+    train_dataset = get_dataset(args.dataset, 'train', train_transform, args.multi_label, args.val_ratio)
+    val_dataset = get_dataset(args.dataset, 'val', val_transform, args.multi_label, args.val_ratio)
     
     # DataLoaders
     g = get_generator(args.seed)
@@ -293,10 +424,6 @@ def main():
     else:
         num_classes = 2
     
-    print(f"🧠 Model: {args.model}")
-    print(f"   Mode: {args.mode}")
-    print(f"   Classes: {num_classes}")
-    
     model = MedicalImageClassifier(
         model_name=args.model,
         num_classes=num_classes,
@@ -304,9 +431,6 @@ def main():
         mode=args.mode,
         multi_label=model_config.get('multi_label', False),
     )
-    
-    print(f"   Trainable params: {model.get_trainable_params():,}")
-    print(f"   Total params: {model.get_total_params():,}")
     
     # =========================================================================
     # LOGGER
@@ -323,7 +447,27 @@ def main():
         config=model_config,
     )
     
-    print(f"📁 Run dir: {logger.run_dir}")
+    # Setup Python logging to run directory
+    log = _setup_run_logger(logger.run_dir)
+    
+    # Log training configuration
+    log.info(f"{'=' * 60}")
+    log.info(f"GenMed-Bench Training")
+    log.info(f"{'=' * 60}")
+    log.info(f"Seed: {args.seed}")
+    log.info(f"Dataset: {args.dataset}")
+    log.info(f"Val ratio: {args.val_ratio}")
+    log.info(f"Input size: {input_size}")
+    log.info(f"Batch size: {batch_size}")
+    log.info(f"Train samples: {len(train_dataset)}")
+    log.info(f"Val samples: {len(val_dataset)}")
+    log.info(f"Model: {args.model}")
+    log.info(f"Mode: {args.mode}")
+    log.info(f"Classes: {num_classes}")
+    log.info(f"Trainable params: {model.get_trainable_params():,}")
+    log.info(f"Total params: {model.get_total_params():,}")
+    log.info(f"Run dir: {logger.run_dir}")
+    log.info(f"{'=' * 60}")
     
     # =========================================================================
     # TRAINER
@@ -352,9 +496,11 @@ def main():
         save_predictions=args.save_predictions,
     )
     
-    print("\n✅ Training completed!")
-    print(f"   Best epoch: {summary['best_epoch']}")
-    print(f"   Best metric: {summary['best_metric']:.4f}")
+    log.info(f"{'=' * 60}")
+    log.info(f"Training completed!")
+    log.info(f"Best epoch: {summary['best_epoch']}")
+    log.info(f"Best metric: {summary['best_metric']:.4f}")
+    log.info(f"{'=' * 60}")
     
     return summary
 
