@@ -1,16 +1,3 @@
-#!/usr/bin/env python3
-"""
-Create train/val/test splits for datasets.
-
-Generates reproducible, stratified splits and saves them as parquet files.
-Splits are based on patient_id to prevent data leakage.
-
-Usage:
-    python scripts/create_splits.py --dataset nih --val-ratio 0.1 --test-ratio 0.1
-    python scripts/create_splits.py --dataset vinbigdata --val-ratio 0.15
-    python scripts/create_splits.py --dataset all
-"""
-
 import argparse
 import sys
 from pathlib import Path

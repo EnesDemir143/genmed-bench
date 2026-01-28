@@ -1,11 +1,3 @@
-"""
-Logging utility for genmed-bench project.
-Usage:
-    from src.utils.logging import get_logger
-    logger = get_logger("data_check")  # Creates logs/data_check.log
-    logger.info("Starting data check...")
-"""
-
 import logging
 import sys
 from pathlib import Path

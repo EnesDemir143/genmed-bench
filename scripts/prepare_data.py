@@ -6,7 +6,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.data.data_convert import create_lmdb_fast
+from src.data.converters.lmdb_convert import create_lmdb_fast
 from src.utils.logging import get_logger
 
 logger = None

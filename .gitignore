@@ -244,3 +244,6 @@ logs/
 # Ignore split files except DVC pointers
 /data/splits/**
 !/data/splits/**/*.dvc
+
+# Development plan (personal notes)
+DEVELOPMENT_PLAN.md
