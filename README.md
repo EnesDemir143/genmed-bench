@@ -134,6 +134,7 @@ See [docs/ADDING_NEW_DATASET.md](docs/ADDING_NEW_DATASET.md) for step-by-step gu
 | [Configuration](docs/CONFIGURATION.md) | Complete reference for config.yaml and models.yaml |
 | [Training Tips](docs/TRAINING_TIPS.md) | Best practices and hyperparameter recommendations |
 | [Reproducibility](docs/REPRODUCIBILITY.md) | How to ensure reproducible experiments |
+| [DVC Guide](docs/DVC_GUIDE.md) | Data version control with Google Drive |
 
 ---
 
