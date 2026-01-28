@@ -1,0 +1,823 @@
+# GenMed-Bench Model Configuration
+# Comprehensive model configs for medical image classification
+# Supports: Linear Probing & Full Fine-tuning
+
+# =============================================================================
+# GLOBAL DEFAULTS
+# =============================================================================
+defaults:
+  input_size: 224
+  in_chans: 3
+  num_classes: 2  # Binary classification (e.g., gender, COVID)
+  pretrained: true
+  mixed_precision: true
+  
+  dataloader:
+    batch_size: 64
+    num_workers: 4
+    pin_memory: true
+    drop_last: true
+    
+# =============================================================================
+# TRAINING MODE DEFAULTS
+# =============================================================================
+training_modes:
+  # Linear Probing: Freeze backbone, train only classifier head
+  linear_probe:
+    freeze_backbone: true
+    trainable_layers: ["head", "fc", "classifier"]
+    
+    optimizer:
+      name: SGD
+      lr: 0.1
+      momentum: 0.9
+      weight_decay: 0.0
+      nesterov: true
+      
+    scheduler:
+      name: cosine
+      T_max: 100
+      eta_min: 0.0
+      
+    training:
+      epochs: 100
+      warmup_epochs: 0
+      batch_size: 256
+      gradient_clip: null
+      
+  # Full Fine-tuning: Train entire network with layer-wise LR decay
+  full_finetune:
+    freeze_backbone: false
+    
+    optimizer:
+      name: AdamW
+      lr: 1.0e-4
+      betas: [0.9, 0.999]
+      weight_decay: 0.05
+      
+    scheduler:
+      name: cosine_with_warmup
+      T_max: 100
+      eta_min: 1.0e-6
+      warmup_lr_init: 1.0e-7
+      
+    training:
+      epochs: 100
+      warmup_epochs: 5
+      batch_size: 32
+      gradient_clip: 1.0
+      layer_decay: 0.65  # Layer-wise LR decay for transformers
+      drop_path_rate: 0.1
+      
+# =============================================================================
+# CNN MODELS
+# =============================================================================
+models:
+  # ---------------------------------------------------------------------------
+  # ResNet Family (Baseline CNNs)
+  # ---------------------------------------------------------------------------
+  resnet18:
+    timm_name: resnet18
+    type: cnn
+    params_m: 11.7
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: SGD
+        momentum: 0.9
+        nesterov: true
+      lr: 1.0e-3
+      batch_size: 64
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.0001
+      
+  resnet50:
+    timm_name: resnet50
+    type: cnn
+    params_m: 25.6
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: SGD
+        momentum: 0.9
+        nesterov: true
+      lr: 1.0e-3
+      batch_size: 32
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.0001
+      
+  # ---------------------------------------------------------------------------
+  # MobileNet Family (Lightweight)
+  # ---------------------------------------------------------------------------
+  mobilenetv3_small:
+    timm_name: mobilenetv3_small_100
+    type: cnn
+    params_m: 2.5
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 512
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: SGD
+        momentum: 0.9
+        nesterov: true
+      lr: 5.0e-4
+      batch_size: 128
+      epochs: 150
+      warmup_epochs: 10
+      weight_decay: 0.00001
+      
+  mobilenetv3_large:
+    timm_name: mobilenetv3_large_100
+    type: cnn
+    params_m: 5.5
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 512
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: SGD
+        momentum: 0.9
+        nesterov: true
+      lr: 5.0e-4
+      batch_size: 128
+      epochs: 150
+      warmup_epochs: 10
+      weight_decay: 0.00001
+      
+  # ---------------------------------------------------------------------------
+  # EfficientNet Family
+  # ---------------------------------------------------------------------------
+  efficientnet_b0:
+    timm_name: efficientnet_b0
+    type: cnn
+    params_m: 5.3
+    drop_rate: 0.2  # Model-level dropout
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: RMSprop  # EfficientNet originally trained with RMSprop
+        momentum: 0.9
+        eps: 0.001
+      lr: 1.0e-3
+      batch_size: 64
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.00001
+      
+  efficientnet_b2:
+    timm_name: efficientnet_b2
+    type: cnn
+    params_m: 9.2
+    input_size: 260
+    drop_rate: 0.3  # Model-level dropout
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: RMSprop  # EfficientNet originally trained with RMSprop
+        momentum: 0.9
+        eps: 0.001
+      lr: 1.0e-3
+      batch_size: 48
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.00001
+      
+  # ---------------------------------------------------------------------------
+  # ConvNeXt (Modern CNN)
+  # ---------------------------------------------------------------------------
+  convnext_tiny:
+    timm_name: convnext_tiny
+    type: cnn
+    params_m: 28.6
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW  # ConvNeXt uses AdamW like Transformers
+        betas: [0.9, 0.999]
+      lr: 5.0e-5
+      batch_size: 32
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.7
+      drop_path_rate: 0.1
+      
+  convnext_small:
+    timm_name: convnext_small
+    type: cnn
+    params_m: 50.2
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW  # ConvNeXt uses AdamW like Transformers
+        betas: [0.9, 0.999]
+      lr: 5.0e-5
+      batch_size: 24
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.7
+      drop_path_rate: 0.2
+      
+# =============================================================================
+# VISION TRANSFORMER MODELS (Primary Focus)
+# =============================================================================
+
+  # ---------------------------------------------------------------------------
+  # ViT (Original Vision Transformer)
+  # ---------------------------------------------------------------------------
+  vit_small_patch16:
+    timm_name: vit_small_patch16_224
+    type: vit
+    params_m: 22.0
+    patch_size: 16
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 5.0e-5
+      batch_size: 64
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.65
+      drop_path_rate: 0.1
+      
+  vit_small_patch32:
+    timm_name: vit_small_patch32_224
+    type: vit
+    params_m: 22.0
+    patch_size: 32
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 5.0e-5
+      batch_size: 96
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.65
+      drop_path_rate: 0.1
+      
+  vit_base_patch16:
+    timm_name: vit_base_patch16_224
+    type: vit
+    params_m: 86.0
+    patch_size: 16
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 3.0e-5
+      batch_size: 32
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.55
+      drop_path_rate: 0.1
+      
+  # ---------------------------------------------------------------------------
+  # DeiT (Data-efficient Image Transformers)
+  # ---------------------------------------------------------------------------
+  deit_small:
+    timm_name: deit_small_patch16_224
+    type: vit
+    params_m: 22.0
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 5.0e-5
+      batch_size: 64
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.65
+      drop_path_rate: 0.1
+      
+  deit_base:
+    timm_name: deit_base_patch16_224
+    type: vit
+    params_m: 86.0
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 3.0e-5
+      batch_size: 32
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.55
+      drop_path_rate: 0.15
+      
+  # ---------------------------------------------------------------------------
+  # Swin Transformer (Hierarchical Vision Transformer)
+  # ---------------------------------------------------------------------------
+  swin_tiny:
+    timm_name: swin_tiny_patch4_window7_224
+    type: swin
+    params_m: 28.0
+    window_size: 7
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 5.0e-5
+      batch_size: 64
+      epochs: 100
+      warmup_epochs: 20
+      weight_decay: 0.05
+      layer_decay: 0.7
+      drop_path_rate: 0.2
+      
+  swin_small:
+    timm_name: swin_small_patch4_window7_224
+    type: swin
+    params_m: 50.0
+    window_size: 7
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 3.0e-5
+      batch_size: 48
+      epochs: 100
+      warmup_epochs: 20
+      weight_decay: 0.05
+      layer_decay: 0.7
+      drop_path_rate: 0.3
+      
+  swin_base:
+    timm_name: swin_base_patch4_window7_224
+    type: swin
+    params_m: 88.0
+    window_size: 7
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 2.0e-5
+      batch_size: 32
+      epochs: 100
+      warmup_epochs: 20
+      weight_decay: 0.05
+      layer_decay: 0.65
+      drop_path_rate: 0.3
+      
+  # ---------------------------------------------------------------------------
+  # Swin Transformer V2 (Improved Swin)
+  # ---------------------------------------------------------------------------
+  swinv2_tiny:
+    timm_name: swinv2_tiny_window8_256
+    type: swin
+    params_m: 28.0
+    input_size: 256
+    window_size: 8
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 5.0e-5
+      batch_size: 48
+      epochs: 100
+      warmup_epochs: 20
+      weight_decay: 0.05
+      layer_decay: 0.7
+      drop_path_rate: 0.2
+      
+  swinv2_small:
+    timm_name: swinv2_small_window8_256
+    type: swin
+    params_m: 50.0
+    input_size: 256
+    window_size: 8
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 3.0e-5
+      batch_size: 32
+      epochs: 100
+      warmup_epochs: 20
+      weight_decay: 0.05
+      layer_decay: 0.7
+      drop_path_rate: 0.3
+      
+  swinv2_base:
+    timm_name: swinv2_base_window8_256
+    type: swin
+    params_m: 88.0
+    input_size: 256
+    window_size: 8
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 2.0e-5
+      batch_size: 24
+      epochs: 100
+      warmup_epochs: 20
+      weight_decay: 0.05
+      layer_decay: 0.65
+      drop_path_rate: 0.4
+      
+  # ---------------------------------------------------------------------------
+  # BEiT (BERT-style Image Transformers)
+  # ---------------------------------------------------------------------------
+  beit_base:
+    timm_name: beit_base_patch16_224
+    type: vit
+    params_m: 86.0
+    
+    linear_probe:
+      # BEiT uses lower lr for linear probing
+      lr: 0.05
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 2.0e-5
+      batch_size: 32
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.65
+      drop_path_rate: 0.15
+      
+  # ---------------------------------------------------------------------------
+  # CaiT (Class-Attention in Image Transformers)
+  # ---------------------------------------------------------------------------
+  cait_s24:
+    timm_name: cait_s24_224
+    type: vit
+    params_m: 47.0
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 3.0e-5
+      batch_size: 32
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.7
+      drop_path_rate: 0.1
+      
+  cait_s36:
+    timm_name: cait_s36_224
+    type: vit
+    params_m: 68.0
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 2.0e-5
+      batch_size: 24
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.65
+      drop_path_rate: 0.15
+      
+  # ---------------------------------------------------------------------------
+  # PVT-v2 (Pyramid Vision Transformer)
+  # ---------------------------------------------------------------------------
+  pvt_v2_b2:
+    timm_name: pvt_v2_b2
+    type: vit
+    params_m: 25.0
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 5.0e-5
+      batch_size: 64
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.7
+      drop_path_rate: 0.1
+      
+  pvt_v2_b3:
+    timm_name: pvt_v2_b3
+    type: vit
+    params_m: 45.0
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 3.0e-5
+      batch_size: 48
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.7
+      drop_path_rate: 0.2
+      
+  # ---------------------------------------------------------------------------
+  # MaxViT (Multi-Axis Vision Transformer)
+  # ---------------------------------------------------------------------------
+  maxvit_base_224:
+    timm_name: maxvit_base_tf_224
+    type: vit
+    params_m: 119.0
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 128
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 3.0e-5
+      batch_size: 16
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.65
+      drop_path_rate: 0.3
+      
+  maxvit_base_384:
+    timm_name: maxvit_base_tf_384
+    type: vit
+    params_m: 119.0
+    input_size: 384
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 64
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 2.0e-5
+      batch_size: 8
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.65
+      drop_path_rate: 0.4
+      
+  # ---------------------------------------------------------------------------
+  # EVA-02 (Exploring Visual Representations via MAE)
+  # ---------------------------------------------------------------------------
+  eva02_tiny:
+    timm_name: eva02_tiny_patch14_224
+    type: vit
+    params_m: 5.5
+    patch_size: 14
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 512
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 5.0e-5
+      batch_size: 96
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.65
+      drop_path_rate: 0.0
+      
+  eva02_small:
+    timm_name: eva02_small_patch14_224
+    type: vit
+    params_m: 22.0
+    patch_size: 14
+    
+    linear_probe:
+      # Uses global SGD optimizer
+      lr: 0.1
+      batch_size: 256
+      epochs: 100
+      
+    full_finetune:
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+      lr: 5.0e-5
+      batch_size: 64
+      epochs: 100
+      warmup_epochs: 5
+      weight_decay: 0.05
+      layer_decay: 0.65
+      drop_path_rate: 0.1
+      
+# =============================================================================
+# MEDGEMMA (Medical Vision-Language Model)
+# =============================================================================
+  medgemma:
+    type: medgemma
+    hf_model_id: google/medgemma-4b-it
+    params_m: 4000  # 4B parameters
+    use_vision_encoder: true
+    input_size: 448
+    
+    # MedGemma specific settings
+    medgemma_config:
+      torch_dtype: bfloat16
+      device_map: auto
+      trust_remote_code: true
+      use_flash_attention_2: true
+        
+    linear_probe:
+      # Freeze vision encoder, train classifier
+      freeze_vision: true
+      freeze_llm: true
+      optimizer:
+        name: SGD
+        momentum: 0.9
+        weight_decay: 0.0
+      lr: 0.01
+      batch_size: 16
+      epochs: 50
+        
+    full_finetune:
+      # LoRA fine-tuning for efficiency
+      use_lora: true
+      lora_config:
+        r: 16
+        lora_alpha: 32
+        target_modules: ["q_proj", "v_proj", "k_proj", "o_proj"]
+        lora_dropout: 0.05
+        
+      optimizer:
+        name: AdamW
+        betas: [0.9, 0.999]
+        weight_decay: 0.01
+      scheduler:
+        name: cosine_with_warmup
+        warmup_ratio: 0.1
+      lr: 2.0e-5
+      batch_size: 4
+      epochs: 20
+      gradient_accumulation_steps: 8

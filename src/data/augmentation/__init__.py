@@ -1,12 +1,11 @@
 """
 Augmentation modülü.
 
-Cross-domain augmentation ve standart augmentation pipeline'ları içerir.
+Cross-domain augmentation ve patch-based augmentation pipeline'ları içerir.
 
 Modüller:
 - XDomainMix: Cross-domain mixup augmentation
-- PipMix: Patch-in-Patch mixing augmentation
-- PixMix: Fractal ve noise pattern mixing
+- PipMix: Patch-in-Patch mix augmentation
 """
 
 from .xdomainmix import (
@@ -19,10 +18,7 @@ from .xdomainmix import (
 from .pipmix import (
     PipMix,
     PipMixBatch,
-    PixMix,
-    ProgressivePipMix,
-    pipmix_transform,
-    pixmix_transform
+    pipmix_transform
 )
 
 __all__ = [
@@ -34,8 +30,5 @@ __all__ = [
     # PipMix
     'PipMix',
     'PipMixBatch',
-    'PixMix',
-    'ProgressivePipMix',
     'pipmix_transform',
-    'pixmix_transform',
 ]
