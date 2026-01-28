@@ -114,7 +114,14 @@ def parse_args():
     
     # Paths
     parser.add_argument('--run_dir', type=str, default='runs', help='Run directory')
-    parser.add_argument('--resume', type=str, default=None, help='Resume from checkpoint')
+    parser.add_argument('--resume', type=str, default=None, help='Resume from checkpoint path')
+    
+    # Resume from run folder (auto-loads config and checkpoint)
+    parser.add_argument(
+        '--retrain', type=str, default=None,
+        help='Resume training from run folder name (e.g., vit_small_patch16_linear_probe_baseline_nih_20260128_123456). '
+             'Automatically loads config.yaml and last checkpoint.'
+    )
     
     # Multi-label
     parser.add_argument('--multi_label', action='store_true', help='Multi-label classification')
@@ -283,12 +290,13 @@ def get_transforms(input_size: int, is_train: bool):
         ])
 
 
-def _setup_run_logger(run_dir: Path) -> logging.Logger:
+def _setup_run_logger(run_dir: Path, mode: str = 'w') -> logging.Logger:
     """
     Setup logger that outputs to both console and run-specific log file.
     
     Args:
         run_dir: Path to run directory
+        mode: File open mode ('w' for new run, 'a' for resume)
         
     Returns:
         Configured logger instance
@@ -313,7 +321,7 @@ def _setup_run_logger(run_dir: Path) -> logging.Logger:
     
     # File handler - logs to run directory
     log_file = Path(run_dir) / "train.log"
-    file_handler = logging.FileHandler(log_file, mode="w", encoding="utf-8")
+    file_handler = logging.FileHandler(log_file, mode=mode, encoding="utf-8")
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
     log.addHandler(file_handler)
@@ -324,6 +332,57 @@ def _setup_run_logger(run_dir: Path) -> logging.Logger:
 def main():
     """Ana training fonksiyonu."""
     args = parse_args()
+    
+    # =========================================================================
+    # RETRAIN MODE - Load config from previous run
+    # =========================================================================
+    
+    retrain_run_dir = None
+    if args.retrain:
+        # Run klasörü var mı kontrol et
+        retrain_run_dir = Path(args.run_dir) / args.retrain
+        if not retrain_run_dir.exists():
+            print(f"Error: Run folder not found: {retrain_run_dir}")
+            sys.exit(1)
+        
+        # Config dosyasını yükle
+        config_path = retrain_run_dir / 'config.yaml'
+        if not config_path.exists():
+            print(f"Error: Config file not found: {config_path}")
+            sys.exit(1)
+        
+        import yaml
+        with open(config_path, 'r') as f:
+            saved_config = yaml.safe_load(f)
+        
+        # Args'ı saved config ile override et
+        args.model = saved_config.get('model_name', args.model)
+        args.mode = saved_config.get('mode', args.mode)
+        args.dataset = saved_config.get('dataset', args.dataset)
+        args.augmentation = saved_config.get('augmentation', 'none')
+        args.multi_label = saved_config.get('multi_label', False)
+        args.val_ratio = saved_config.get('val_ratio', 0.2)
+        
+        # Hyperparameters
+        if args.epochs is None:
+            args.epochs = saved_config.get('epochs')
+        if args.batch_size is None:
+            args.batch_size = saved_config.get('batch_size')
+        if args.lr is None:
+            args.lr = saved_config.get('lr')
+        
+        # Last checkpoint'i resume olarak ayarla
+        last_checkpoint = retrain_run_dir / 'checkpoints' / 'last.pth'
+        if last_checkpoint.exists():
+            args.resume = str(last_checkpoint)
+            print(f"Resuming from: {args.resume}")
+        else:
+            print(f"Warning: No last checkpoint found in {retrain_run_dir}")
+        
+        print(f"Loaded config from: {config_path}")
+        print(f"  Model: {args.model}")
+        print(f"  Dataset: {args.dataset}")
+        print(f"  Mode: {args.mode}")
     
     # =========================================================================
     # SETUP
@@ -438,23 +497,43 @@ def main():
     
     augmentation_name = args.augmentation if args.augmentation != 'none' else 'baseline'
     
-    logger = ExperimentLogger(
-        model_name=args.model,
-        mode=args.mode,
-        augmentation=augmentation_name,
-        dataset=args.dataset,
-        base_dir=args.run_dir,
-        config=model_config,
-    )
+    # Retrain modunda aynı run klasörünü kullan
+    if retrain_run_dir:
+        # Run name'den timestamp'i çıkar
+        run_name = args.retrain
+        timestamp = run_name.split('_')[-2] + '_' + run_name.split('_')[-1]
+        
+        logger = ExperimentLogger(
+            model_name=args.model,
+            mode=args.mode,
+            augmentation=augmentation_name,
+            dataset=args.dataset,
+            base_dir=args.run_dir,
+            config=model_config,
+            timestamp=timestamp,  # Aynı timestamp kullanarak aynı klasöre yaz
+        )
+    else:
+        logger = ExperimentLogger(
+            model_name=args.model,
+            mode=args.mode,
+            augmentation=augmentation_name,
+            dataset=args.dataset,
+            base_dir=args.run_dir,
+            config=model_config,
+        )
     
     # Setup Python logging to run directory
-    log = _setup_run_logger(logger.run_dir)
+    log_mode = 'a' if args.retrain else 'w'
+    log = _setup_run_logger(logger.run_dir, mode=log_mode)
     
-    # Log training configuration
-    log.info(f"{'=' * 60}")
-    log.info(f"GenMed-Bench Training")
-    log.info(f"{'=' * 60}")
-    log.info(f"Seed: {args.seed}")
+    # Log hyperparameters
+    log.info(f"Config: {model_config}")
+    log.info(f"Augmentation: {augmentation_name}")
+    log.info(f"Dataset: {args.dataset}")
+    log.info(f"Run Directory: {logger.run_dir}")
+    if args.retrain:
+        log.info(f"Retraining from: {args.retrain}")
+        log.info(f"Log mode: append")
     log.info(f"Dataset: {args.dataset}")
     log.info(f"Val ratio: {args.val_ratio}")
     log.info(f"Input size: {input_size}")

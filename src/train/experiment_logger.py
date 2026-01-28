@@ -118,11 +118,6 @@ class ExperimentLogger:
         if config is not None:
             self.save_config(config)
         
-        # CSV headers initialized
-        self._train_header_written = False
-        self._val_header_written = False
-        self._system_header_written = False
-        
         # History (plotting için)
         self.train_history: List[Dict] = []
         self.val_history: List[Dict] = []
@@ -131,6 +126,50 @@ class ExperimentLogger:
         # Best tracking
         self.best_metric = 0.0
         self.best_epoch = 0
+        
+        # Resume: Mevcut CSV dosyalarını kontrol et ve yükle
+        self._train_header_written = self.train_metrics_path.exists()
+        self._val_header_written = self.val_metrics_path.exists()
+        self._system_header_written = self.system_stats_path.exists()
+        
+        # Mevcut history'yi yükle (resume için)
+        if self._train_header_written:
+            self._load_existing_history()
+    
+    def _load_existing_history(self) -> None:
+        """Resume durumunda mevcut CSV'lerden history'yi yükle."""
+        import pandas as pd
+        
+        # Train history
+        if self.train_metrics_path.exists():
+            try:
+                df = pd.read_csv(self.train_metrics_path)
+                self.train_history = df.to_dict('records')
+            except Exception:
+                self.train_history = []
+        
+        # Val history
+        if self.val_metrics_path.exists():
+            try:
+                df = pd.read_csv(self.val_metrics_path)
+                self.val_history = df.to_dict('records')
+                
+                # Best metric'i güncelle
+                if 'roc_auc' in df.columns:
+                    valid_aucs = df['roc_auc'].dropna()
+                    if len(valid_aucs) > 0:
+                        self.best_metric = valid_aucs.max()
+                        self.best_epoch = int(df.loc[valid_aucs.idxmax(), 'epoch'])
+            except Exception:
+                self.val_history = []
+        
+        # System history
+        if self.system_stats_path.exists():
+            try:
+                df = pd.read_csv(self.system_stats_path)
+                self.system_history = df.to_dict('records')
+            except Exception:
+                self.system_history = []
     
     def save_config(self, config: Dict[str, Any]) -> None:
         """Config'i YAML olarak kaydet."""
@@ -315,6 +354,7 @@ class ExperimentLogger:
         y_pred: np.ndarray,
         y_prob: np.ndarray,
         class_names: Optional[List[str]] = None,
+        multi_label: bool = False,
     ) -> None:
         """
         Training sonunda prediction-based figürleri çiz (son epoch).
@@ -324,15 +364,16 @@ class ExperimentLogger:
             y_pred: Predicted labels
             y_prob: Prediction probabilities
             class_names: Class isimleri
+            multi_label: Multi-label classification mi?
         """
         if not MATPLOTLIB_AVAILABLE:
             return
         
         # Final figürler (figs/ altına)
-        self._plot_confusion_matrix(y_true, y_pred, class_names, epoch=None)
-        self._plot_roc_curve(y_true, y_prob, class_names, epoch=None)
-        self._plot_precision_recall_curve(y_true, y_prob, class_names, epoch=None)
-        self._plot_class_distribution(y_true, y_pred, class_names, epoch=None)
+        self._plot_confusion_matrix(y_true, y_pred, class_names, epoch=None, multi_label=multi_label)
+        self._plot_roc_curve(y_true, y_prob, class_names, epoch=None, multi_label=multi_label)
+        self._plot_precision_recall_curve(y_true, y_prob, class_names, epoch=None, multi_label=multi_label)
+        self._plot_class_distribution(y_true, y_pred, class_names, epoch=None, multi_label=multi_label)
     
     def plot_epoch_figures(
         self,
@@ -341,6 +382,7 @@ class ExperimentLogger:
         y_pred: np.ndarray,
         y_prob: np.ndarray,
         class_names: Optional[List[str]] = None,
+        multi_label: bool = False,
     ) -> None:
         """
         Her epoch sonunda per-epoch figürleri çiz.
@@ -351,15 +393,16 @@ class ExperimentLogger:
             y_pred: Predicted labels
             y_prob: Prediction probabilities
             class_names: Class isimleri
+            multi_label: Multi-label classification mi?
         """
         if not MATPLOTLIB_AVAILABLE:
             return
         
         # Per-epoch figürler (subfolder'lara)
-        self._plot_confusion_matrix(y_true, y_pred, class_names, epoch=epoch)
-        self._plot_roc_curve(y_true, y_prob, class_names, epoch=epoch)
-        self._plot_precision_recall_curve(y_true, y_prob, class_names, epoch=epoch)
-        self._plot_class_distribution(y_true, y_pred, class_names, epoch=epoch)
+        self._plot_confusion_matrix(y_true, y_pred, class_names, epoch=epoch, multi_label=multi_label)
+        self._plot_roc_curve(y_true, y_prob, class_names, epoch=epoch, multi_label=multi_label)
+        self._plot_precision_recall_curve(y_true, y_prob, class_names, epoch=epoch, multi_label=multi_label)
+        self._plot_class_distribution(y_true, y_pred, class_names, epoch=epoch, multi_label=multi_label)
         
         # Aggregate curve'ları her epoch güncelle
         self._plot_lr_curve()
@@ -450,38 +493,171 @@ class ExperimentLogger:
         plt.close()
     
     def _plot_system_curve(self) -> None:
-        """System stats curve."""
+        """Comprehensive system stats curves (CPU, RAM, GPU/MPS)."""
         if not self.system_history:
             return
         
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        
         epochs = [h.get('epoch', i) for i, h in enumerate(self.system_history)]
         
-        # RAM
-        ram = [h.get('ram_percent', 0) or 0 for h in self.system_history]
-        if any(ram):
-            axes[0].plot(epochs, ram, 'b-', linewidth=2)
-            axes[0].set_xlabel('Epoch')
-            axes[0].set_ylabel('RAM %')
-            axes[0].set_title('RAM Usage')
-            axes[0].grid(True, alpha=0.3)
-            axes[0].set_ylim(0, 100)
+        # Collect all available metrics
+        cpu_percent = [h.get('cpu_percent', 0) or 0 for h in self.system_history]
+        ram_percent = [h.get('ram_percent', 0) or 0 for h in self.system_history]
+        ram_used_gb = [h.get('ram_used_gb', 0) or 0 for h in self.system_history]
         
-        # GPU/MPS Memory
-        gpu = [h.get('gpu_memory_percent', h.get('mps_memory_allocated_gb', 0) * 10) or 0 
-               for h in self.system_history]
-        if any(gpu):
-            axes[1].plot(epochs, gpu, 'g-', linewidth=2)
-            axes[1].set_xlabel('Epoch')
-            axes[1].set_ylabel('GPU Memory %')
-            axes[1].set_title('GPU/MPS Memory Usage')
-            axes[1].grid(True, alpha=0.3)
-            axes[1].set_ylim(0, 100)
+        # GPU (CUDA) or MPS memory
+        gpu_memory_percent = [h.get('gpu_memory_percent', 0) or 0 for h in self.system_history]
+        gpu_memory_used_gb = [h.get('gpu_memory_used_gb', 0) or 0 for h in self.system_history]
+        gpu_utilization = [h.get('gpu_utilization', 0) or 0 for h in self.system_history]
+        mps_memory_gb = [h.get('mps_memory_allocated_gb', 0) or 0 for h in self.system_history]
         
+        # Determine if CUDA or MPS
+        has_cuda = any(gpu_memory_percent) or any(gpu_utilization)
+        has_mps = any(mps_memory_gb)
+        
+        # Create 2x2 figure
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        
+        # ===== Plot 1: CPU Usage =====
+        ax = axes[0, 0]
+        if any(cpu_percent):
+            ax.plot(epochs, cpu_percent, 'b-', linewidth=2, marker='o', markersize=3)
+            ax.fill_between(epochs, cpu_percent, alpha=0.3)
+            ax.set_ylim(0, 100)
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('CPU Usage (%)')
+        ax.set_title('CPU Utilization', fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        
+        # Add stats annotation
+        if any(cpu_percent):
+            avg_cpu = np.mean(cpu_percent)
+            max_cpu = np.max(cpu_percent)
+            ax.axhline(y=avg_cpu, color='red', linestyle='--', alpha=0.5, label=f'Avg: {avg_cpu:.1f}%')
+            ax.legend(loc='upper right', fontsize=8)
+        
+        # ===== Plot 2: RAM Usage =====
+        ax = axes[0, 1]
+        if any(ram_percent):
+            ax.plot(epochs, ram_percent, 'g-', linewidth=2, marker='o', markersize=3)
+            ax.fill_between(epochs, ram_percent, alpha=0.3, color='green')
+            ax.set_ylim(0, 100)
+            
+            # Add GB values as secondary y-axis
+            if any(ram_used_gb):
+                ax2 = ax.twinx()
+                ax2.plot(epochs, ram_used_gb, 'g--', linewidth=1, alpha=0.7)
+                ax2.set_ylabel('RAM (GB)', color='green', alpha=0.7)
+                ax2.tick_params(axis='y', labelcolor='green')
+        
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('RAM Usage (%)')
+        ax.set_title('RAM Memory', fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        
+        if any(ram_percent):
+            avg_ram = np.mean(ram_percent)
+            ax.axhline(y=avg_ram, color='red', linestyle='--', alpha=0.5, label=f'Avg: {avg_ram:.1f}%')
+            ax.legend(loc='upper right', fontsize=8)
+        
+        # ===== Plot 3: GPU/MPS Memory =====
+        ax = axes[1, 0]
+        if has_cuda:
+            ax.plot(epochs, gpu_memory_percent, 'm-', linewidth=2, marker='o', markersize=3)
+            ax.fill_between(epochs, gpu_memory_percent, alpha=0.3, color='magenta')
+            ax.set_ylim(0, 100)
+            ax.set_ylabel('GPU Memory (%)')
+            ax.set_title('GPU Memory Usage (CUDA)', fontweight='bold')
+            
+            if any(gpu_memory_used_gb):
+                ax2 = ax.twinx()
+                ax2.plot(epochs, gpu_memory_used_gb, 'm--', linewidth=1, alpha=0.7)
+                ax2.set_ylabel('GPU Memory (GB)', color='magenta', alpha=0.7)
+                ax2.tick_params(axis='y', labelcolor='magenta')
+            
+            if any(gpu_memory_percent):
+                avg_gpu = np.mean(gpu_memory_percent)
+                ax.axhline(y=avg_gpu, color='red', linestyle='--', alpha=0.5, label=f'Avg: {avg_gpu:.1f}%')
+                ax.legend(loc='upper right', fontsize=8)
+        
+        elif has_mps:
+            ax.plot(epochs, mps_memory_gb, 'c-', linewidth=2, marker='o', markersize=3)
+            ax.fill_between(epochs, mps_memory_gb, alpha=0.3, color='cyan')
+            ax.set_ylabel('MPS Memory (GB)')
+            ax.set_title('MPS Memory Usage (Apple Silicon)', fontweight='bold')
+            
+            if any(mps_memory_gb):
+                avg_mps = np.mean(mps_memory_gb)
+                ax.axhline(y=avg_mps, color='red', linestyle='--', alpha=0.5, label=f'Avg: {avg_mps:.2f} GB')
+                ax.legend(loc='upper right', fontsize=8)
+        else:
+            ax.text(0.5, 0.5, 'No GPU/MPS Data', ha='center', va='center', transform=ax.transAxes, fontsize=14, color='gray')
+            ax.set_title('GPU/MPS Memory', fontweight='bold')
+        
+        ax.set_xlabel('Epoch')
+        ax.grid(True, alpha=0.3)
+        
+        # ===== Plot 4: GPU Utilization (CUDA only) or Summary =====
+        ax = axes[1, 1]
+        if has_cuda and any(gpu_utilization):
+            ax.plot(epochs, gpu_utilization, 'orange', linewidth=2, marker='o', markersize=3)
+            ax.fill_between(epochs, gpu_utilization, alpha=0.3, color='orange')
+            ax.set_ylim(0, 100)
+            ax.set_xlabel('Epoch')
+            ax.set_ylabel('GPU Utilization (%)')
+            ax.set_title('GPU Compute Utilization', fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            
+            avg_util = np.mean(gpu_utilization)
+            ax.axhline(y=avg_util, color='red', linestyle='--', alpha=0.5, label=f'Avg: {avg_util:.1f}%')
+            ax.legend(loc='upper right', fontsize=8)
+        else:
+            # Show summary stats instead
+            summary_text = self._generate_system_summary()
+            ax.text(0.5, 0.5, summary_text, ha='center', va='center', transform=ax.transAxes, 
+                   fontsize=11, family='monospace',
+                   bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.5))
+            ax.set_title('System Summary', fontweight='bold')
+            ax.axis('off')
+        
+        plt.suptitle('System Resource Monitoring', fontsize=14, fontweight='bold')
         plt.tight_layout()
         plt.savefig(self.figs_dir / 'system_curve.png', dpi=150)
         plt.close()
+    
+    def _generate_system_summary(self) -> str:
+        """Generate summary text for system stats."""
+        if not self.system_history:
+            return "No data available"
+        
+        lines = []
+        
+        # CPU
+        cpu = [h.get('cpu_percent', 0) or 0 for h in self.system_history]
+        if any(cpu):
+            lines.append(f"CPU:  Avg={np.mean(cpu):.1f}%  Max={np.max(cpu):.1f}%")
+        
+        # RAM
+        ram = [h.get('ram_percent', 0) or 0 for h in self.system_history]
+        ram_gb = [h.get('ram_used_gb', 0) or 0 for h in self.system_history]
+        if any(ram):
+            lines.append(f"RAM:  Avg={np.mean(ram):.1f}%  Max={np.max(ram):.1f}%")
+            if any(ram_gb):
+                lines.append(f"      Avg={np.mean(ram_gb):.1f}GB  Max={np.max(ram_gb):.1f}GB")
+        
+        # GPU
+        gpu = [h.get('gpu_memory_percent', 0) or 0 for h in self.system_history]
+        if any(gpu):
+            lines.append(f"GPU:  Avg={np.mean(gpu):.1f}%  Max={np.max(gpu):.1f}%")
+        
+        # MPS
+        mps = [h.get('mps_memory_allocated_gb', 0) or 0 for h in self.system_history]
+        if any(mps):
+            lines.append(f"MPS:  Avg={np.mean(mps):.2f}GB  Max={np.max(mps):.2f}GB")
+        
+        if not lines:
+            return "No system data collected"
+        
+        return "\n".join(lines)
     
     def _plot_confusion_matrix(
         self,
@@ -489,9 +665,15 @@ class ExperimentLogger:
         y_pred: np.ndarray,
         class_names: Optional[List[str]] = None,
         epoch: Optional[int] = None,
+        multi_label: bool = False,
     ) -> None:
         """Confusion matrix plot."""
-        from sklearn.metrics import confusion_matrix
+        from sklearn.metrics import confusion_matrix, multilabel_confusion_matrix
+        
+        # Multi-label: Create per-label confusion matrices grid
+        if multi_label:
+            self._plot_multilabel_confusion_matrix(y_true, y_pred, class_names, epoch)
+            return
         
         cm = confusion_matrix(y_true, y_pred)
         num_classes = cm.shape[0]
@@ -542,29 +724,123 @@ class ExperimentLogger:
         plt.savefig(save_path, dpi=150)
         plt.close()
     
+    def _plot_multilabel_confusion_matrix(
+        self,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        class_names: Optional[List[str]] = None,
+        epoch: Optional[int] = None,
+    ) -> None:
+        """Multi-label confusion matrix plot (per-label 2x2 matrices grid)."""
+        from sklearn.metrics import multilabel_confusion_matrix
+        
+        # Get per-label confusion matrices: shape [n_labels, 2, 2]
+        mcm = multilabel_confusion_matrix(y_true, y_pred)
+        num_labels = mcm.shape[0]
+        
+        if class_names is None:
+            class_names = [f'Label {i}' for i in range(num_labels)]
+        
+        # Create grid layout
+        n_cols = min(4, num_labels)
+        n_rows = (num_labels + n_cols - 1) // n_cols
+        
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows))
+        if num_labels == 1:
+            axes = np.array([[axes]])
+        elif n_rows == 1:
+            axes = axes.reshape(1, -1)
+        elif n_cols == 1:
+            axes = axes.reshape(-1, 1)
+        
+        for idx in range(num_labels):
+            row, col = idx // n_cols, idx % n_cols
+            ax = axes[row, col]
+            
+            cm = mcm[idx]  # 2x2 matrix: [[TN, FP], [FN, TP]]
+            im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
+            
+            # Annotations
+            thresh = cm.max() / 2.
+            for i in range(2):
+                for j in range(2):
+                    ax.text(j, i, format(cm[i, j], 'd'),
+                           ha='center', va='center',
+                           color='white' if cm[i, j] > thresh else 'black')
+            
+            ax.set(
+                xticks=[0, 1], yticks=[0, 1],
+                xticklabels=['Neg', 'Pos'], yticklabels=['Neg', 'Pos'],
+                ylabel='True', xlabel='Pred',
+                title=class_names[idx][:20]  # Truncate long names
+            )
+        
+        # Hide empty subplots
+        for idx in range(num_labels, n_rows * n_cols):
+            row, col = idx // n_cols, idx % n_cols
+            axes[row, col].axis('off')
+        
+        title = f'Multi-Label Confusion Matrices (Epoch {epoch})' if epoch else 'Multi-Label Confusion Matrices (Final)'
+        fig.suptitle(title, fontsize=14)
+        plt.tight_layout()
+        
+        # Save path
+        if epoch is not None:
+            save_path = self.figs_dir / 'confusion_matrix' / f'epoch_{epoch:03d}.png'
+        else:
+            save_path = self.figs_dir / 'confusion_matrix_final.png'
+        plt.savefig(save_path, dpi=150)
+        plt.close()
+    
     def _plot_roc_curve(
         self,
         y_true: np.ndarray,
         y_prob: np.ndarray,
         class_names: Optional[List[str]] = None,
         epoch: Optional[int] = None,
+        multi_label: bool = False,
     ) -> None:
         """ROC curve plot."""
         from sklearn.metrics import roc_curve, auc
         
-        # Tek sınıf kontrolü
-        if len(np.unique(y_true)) < 2:
-            return
-        
         plt.figure(figsize=(10, 8))
         
+        # Multi-label: Each column is already binary
+        if multi_label:
+            num_labels = y_prob.shape[1]
+            if class_names is None:
+                class_names = [f'Label {i}' for i in range(num_labels)]
+            
+            aucs = []
+            for i in range(num_labels):
+                # Check if both classes exist for this label
+                if len(np.unique(y_true[:, i])) < 2:
+                    continue
+                fpr, tpr, _ = roc_curve(y_true[:, i], y_prob[:, i])
+                roc_auc = auc(fpr, tpr)
+                aucs.append(roc_auc)
+                plt.plot(fpr, tpr, lw=1.5, alpha=0.7, label=f'{class_names[i][:15]} ({roc_auc:.3f})')
+            
+            # Macro average
+            if aucs:
+                macro_auc = np.mean(aucs)
+                plt.plot([], [], ' ', label=f'Macro AUC: {macro_auc:.3f}')
+        
         # Binary classification
-        if y_prob.shape[1] == 2:
+        elif y_prob.shape[1] == 2:
+            # Tek sınıf kontrolü
+            if len(np.unique(y_true)) < 2:
+                plt.close()
+                return
             fpr, tpr, _ = roc_curve(y_true, y_prob[:, 1])
             roc_auc = auc(fpr, tpr)
             plt.plot(fpr, tpr, lw=2, label=f'ROC curve (AUC = {roc_auc:.3f})')
+        
         else:
             # Multiclass - one vs rest
+            if len(np.unique(y_true)) < 2:
+                plt.close()
+                return
             if class_names is None:
                 class_names = [f'Class {i}' for i in range(y_prob.shape[1])]
             
@@ -583,7 +859,7 @@ class ExperimentLogger:
         plt.ylabel('True Positive Rate')
         title = f'ROC Curve (Epoch {epoch})' if epoch else 'ROC Curve (Final)'
         plt.title(title)
-        plt.legend(loc='lower right')
+        plt.legend(loc='lower right', fontsize=8)
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         
@@ -601,23 +877,49 @@ class ExperimentLogger:
         y_prob: np.ndarray,
         class_names: Optional[List[str]] = None,
         epoch: Optional[int] = None,
+        multi_label: bool = False,
     ) -> None:
         """Precision-Recall curve plot."""
         from sklearn.metrics import precision_recall_curve, average_precision_score
         
-        # Tek sınıf kontrolü
-        if len(np.unique(y_true)) < 2:
-            return
-        
         plt.figure(figsize=(10, 8))
         
+        # Multi-label: Each column is already binary
+        if multi_label:
+            num_labels = y_prob.shape[1]
+            if class_names is None:
+                class_names = [f'Label {i}' for i in range(num_labels)]
+            
+            aps = []
+            for i in range(num_labels):
+                # Check if both classes exist for this label
+                if len(np.unique(y_true[:, i])) < 2:
+                    continue
+                precision, recall, _ = precision_recall_curve(y_true[:, i], y_prob[:, i])
+                ap = average_precision_score(y_true[:, i], y_prob[:, i])
+                aps.append(ap)
+                plt.plot(recall, precision, lw=1.5, alpha=0.7, label=f'{class_names[i][:15]} ({ap:.3f})')
+            
+            # Macro average
+            if aps:
+                macro_ap = np.mean(aps)
+                plt.plot([], [], ' ', label=f'Macro AP: {macro_ap:.3f}')
+        
         # Binary classification
-        if y_prob.shape[1] == 2:
+        elif y_prob.shape[1] == 2:
+            # Tek sınıf kontrolü
+            if len(np.unique(y_true)) < 2:
+                plt.close()
+                return
             precision, recall, _ = precision_recall_curve(y_true, y_prob[:, 1])
             ap = average_precision_score(y_true, y_prob[:, 1])
             plt.plot(recall, precision, lw=2, label=f'PR curve (AP = {ap:.3f})')
+        
         else:
             # Multiclass
+            if len(np.unique(y_true)) < 2:
+                plt.close()
+                return
             if class_names is None:
                 class_names = [f'Class {i}' for i in range(y_prob.shape[1])]
             
@@ -635,7 +937,7 @@ class ExperimentLogger:
         plt.ylabel('Precision')
         title = f'Precision-Recall Curve (Epoch {epoch})' if epoch else 'Precision-Recall Curve (Final)'
         plt.title(title)
-        plt.legend(loc='lower left')
+        plt.legend(loc='lower left', fontsize=8)
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         
@@ -653,44 +955,76 @@ class ExperimentLogger:
         y_pred: np.ndarray,
         class_names: Optional[List[str]] = None,
         epoch: Optional[int] = None,
+        multi_label: bool = False,
     ) -> None:
         """Class distribution comparison plot."""
-        num_classes = len(np.unique(y_true))
         
-        if class_names is None:
-            class_names = [f'Class {i}' for i in range(num_classes)]
+        # Multi-label: Show per-label positive counts
+        if multi_label:
+            num_labels = y_true.shape[1]
+            if class_names is None:
+                class_names = [f'Label {i}' for i in range(num_labels)]
+            
+            # Count positives per label
+            true_counts = y_true.sum(axis=0)
+            pred_counts = y_pred.sum(axis=0)
+            
+            x = np.arange(num_labels)
+            width = 0.35
+            
+            fig, ax = plt.subplots(figsize=(max(10, num_labels * 0.5), 6))
+            bars1 = ax.bar(x - width/2, true_counts, width, label='True Positives', color='steelblue', alpha=0.8)
+            bars2 = ax.bar(x + width/2, pred_counts, width, label='Predicted Positives', color='coral', alpha=0.8)
+            
+            ax.set_xlabel('Label')
+            ax.set_ylabel('Positive Count')
+            title = f'Multi-Label Distribution (Epoch {epoch})' if epoch else 'Multi-Label Distribution (Final)'
+            ax.set_title(title)
+            ax.set_xticks(x)
+            ax.set_xticklabels([n[:15] for n in class_names], rotation=45, ha='right')
+            ax.legend()
+            ax.grid(True, alpha=0.3, axis='y')
+            
+            plt.tight_layout()
         
-        # Count distributions
-        true_counts = np.bincount(y_true, minlength=num_classes)
-        pred_counts = np.bincount(y_pred, minlength=num_classes)
-        
-        x = np.arange(num_classes)
-        width = 0.35
-        
-        fig, ax = plt.subplots(figsize=(10, 6))
-        bars1 = ax.bar(x - width/2, true_counts, width, label='True', color='steelblue', alpha=0.8)
-        bars2 = ax.bar(x + width/2, pred_counts, width, label='Predicted', color='coral', alpha=0.8)
-        
-        ax.set_xlabel('Class')
-        ax.set_ylabel('Count')
-        title = f'Class Distribution (Epoch {epoch})' if epoch else 'Class Distribution (Final)'
-        ax.set_title(title)
-        ax.set_xticks(x)
-        ax.set_xticklabels(class_names, rotation=45, ha='right')
-        ax.legend()
-        ax.grid(True, alpha=0.3, axis='y')
-        
-        # Value labels on bars
-        for bar in bars1:
-            height = bar.get_height()
-            ax.annotate(f'{int(height)}', xy=(bar.get_x() + bar.get_width()/2, height),
-                       xytext=(0, 3), textcoords='offset points', ha='center', va='bottom', fontsize=8)
-        for bar in bars2:
-            height = bar.get_height()
-            ax.annotate(f'{int(height)}', xy=(bar.get_x() + bar.get_width()/2, height),
-                       xytext=(0, 3), textcoords='offset points', ha='center', va='bottom', fontsize=8)
-        
-        plt.tight_layout()
+        else:
+            # Single-label (binary/multiclass)
+            num_classes = len(np.unique(y_true))
+            
+            if class_names is None:
+                class_names = [f'Class {i}' for i in range(num_classes)]
+            
+            # Count distributions
+            true_counts = np.bincount(y_true, minlength=num_classes)
+            pred_counts = np.bincount(y_pred, minlength=num_classes)
+            
+            x = np.arange(num_classes)
+            width = 0.35
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            bars1 = ax.bar(x - width/2, true_counts, width, label='True', color='steelblue', alpha=0.8)
+            bars2 = ax.bar(x + width/2, pred_counts, width, label='Predicted', color='coral', alpha=0.8)
+            
+            ax.set_xlabel('Class')
+            ax.set_ylabel('Count')
+            title = f'Class Distribution (Epoch {epoch})' if epoch else 'Class Distribution (Final)'
+            ax.set_title(title)
+            ax.set_xticks(x)
+            ax.set_xticklabels(class_names, rotation=45, ha='right')
+            ax.legend()
+            ax.grid(True, alpha=0.3, axis='y')
+            
+            # Value labels on bars
+            for bar in bars1:
+                height = bar.get_height()
+                ax.annotate(f'{int(height)}', xy=(bar.get_x() + bar.get_width()/2, height),
+                           xytext=(0, 3), textcoords='offset points', ha='center', va='bottom', fontsize=8)
+            for bar in bars2:
+                height = bar.get_height()
+                ax.annotate(f'{int(height)}', xy=(bar.get_x() + bar.get_width()/2, height),
+                           xytext=(0, 3), textcoords='offset points', ha='center', va='bottom', fontsize=8)
+            
+            plt.tight_layout()
         
         # Save path
         if epoch is not None:

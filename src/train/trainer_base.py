@@ -249,11 +249,16 @@ class BaseTrainer(ABC):
         import logging
         log = logging.getLogger("train")
         
+        # Resume kontrolü - checkpoint'ten yüklendiyse devam et
+        start_epoch = self.current_epoch + 1 if self.current_epoch > 0 else 1
+        
         log.info(f"Training: {self.config.get('model_name', 'model')}")
         log.info(f"Device: {self.device}")
-        log.info(f"Epochs: {epochs}")
+        log.info(f"Epochs: {start_epoch} -> {epochs}")
+        if start_epoch > 1:
+            log.info(f"Resuming from epoch {start_epoch} (best metric: {self.best_metric:.4f})")
         
-        for epoch in range(1, epochs + 1):
+        for epoch in range(start_epoch, epochs + 1):
             self.current_epoch = epoch
             
             # Train
@@ -290,7 +295,7 @@ class BaseTrainer(ABC):
                 val_preds = (val_probs >= 0.5).astype(int)
             else:
                 val_preds = np.argmax(val_probs, axis=1)
-            self.logger.plot_epoch_figures(epoch, val_labels, val_preds, val_probs)
+            self.logger.plot_epoch_figures(epoch, val_labels, val_preds, val_probs, multi_label=self.multi_label)
             
             # Print progress
             self._print_progress(epoch, epochs, train_metrics, val_metrics, is_best)
@@ -323,7 +328,7 @@ class BaseTrainer(ABC):
             val_preds = (val_probs >= 0.5).astype(int)
         else:
             val_preds = np.argmax(val_probs, axis=1)
-        self.logger.plot_final_figures(val_labels, val_preds, val_probs)
+        self.logger.plot_final_figures(val_labels, val_preds, val_probs, multi_label=self.multi_label)
         
         # Summary
         self.logger.print_summary()
